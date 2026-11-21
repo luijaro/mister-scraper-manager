@@ -1,0 +1,1627 @@
+<!DOCTYPE html>
+<html lang="es" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Manual Interactivo — MiSTer Cover Scraper (ConsoleMode)</title>
+  <style>
+    :root {
+      --bg: #0d1117;
+      --bg-elevated: #161b22;
+      --bg-card: #1c222b;
+      --bg-code: #0a0e14;
+      --border: #30363d;
+      --text: #e6edf3;
+      --text-muted: #8b949e;
+      --accent: #3b82f6;
+      --accent-soft: rgba(59, 130, 246, 0.14);
+      --green: #22c55e;
+      --green-soft: rgba(34, 197, 94, 0.14);
+      --amber: #f59e0b;
+      --amber-soft: rgba(245, 158, 11, 0.14);
+      --red: #ef4444;
+      --red-soft: rgba(239, 68, 68, 0.14);
+      --cyan: #06b6d4;
+      --shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+      --radius: 10px;
+      --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      --sans: system-ui, -apple-system, "Segoe UI", Roboto, Ubuntu, Cantarell, "Noto Sans", sans-serif;
+    }
+
+    html[data-theme="light"] {
+      --bg: #f6f8fa;
+      --bg-elevated: #ffffff;
+      --bg-card: #ffffff;
+      --bg-code: #f0f3f6;
+      --border: #d0d7de;
+      --text: #1f2328;
+      --text-muted: #59636e;
+      --accent: #2563eb;
+      --accent-soft: rgba(37, 99, 235, 0.1);
+      --green: #16a34a;
+      --green-soft: rgba(22, 163, 74, 0.12);
+      --amber: #d97706;
+      --amber-soft: rgba(217, 119, 6, 0.12);
+      --red: #dc2626;
+      --red-soft: rgba(220, 38, 38, 0.12);
+      --cyan: #0891b2;
+      --shadow: 0 8px 24px rgba(31, 35, 40, 0.08);
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      font-family: var(--sans);
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.6;
+      display: flex;
+      min-height: 100vh;
+    }
+
+    /* Sidebar */
+    .sidebar {
+      width: 280px;
+      flex-shrink: 0;
+      position: fixed;
+      top: 0;
+      left: 0;
+      bottom: 0;
+      background: var(--bg-elevated);
+      border-right: 1px solid var(--border);
+      padding: 22px 16px;
+      overflow-y: auto;
+      z-index: 40;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      transition: transform 0.22s ease;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding-bottom: 14px;
+      border-bottom: 1px solid var(--border);
+    }
+    .brand-icon {
+      width: 38px;
+      height: 38px;
+      border-radius: 9px;
+      background: linear-gradient(135deg, var(--accent), var(--cyan));
+      display: grid;
+      place-items: center;
+      color: #fff;
+      font-weight: 800;
+      font-family: var(--mono);
+      font-size: 14px;
+      flex-shrink: 0;
+    }
+    .brand-title { font-weight: 700; font-size: 15px; line-height: 1.25; }
+    .brand-sub { font-size: 12px; color: var(--text-muted); }
+
+    .nav-list {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      flex: 1;
+    }
+    .nav-link {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 9px 11px;
+      border-radius: 7px;
+      color: var(--text-muted);
+      text-decoration: none;
+      font-size: 13.5px;
+      font-weight: 500;
+      transition: background 0.15s, color 0.15s;
+    }
+    .nav-link:hover {
+      background: var(--accent-soft);
+      color: var(--text);
+    }
+    .nav-link.active {
+      background: var(--accent-soft);
+      color: var(--accent);
+      font-weight: 600;
+    }
+    .nav-num {
+      font-family: var(--mono);
+      font-size: 11px;
+      opacity: 0.75;
+      width: 20px;
+    }
+
+    .sidebar-footer {
+      border-top: 1px solid var(--border);
+      padding-top: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      border: 1px solid var(--border);
+      background: var(--bg-card);
+      color: var(--text);
+      padding: 7px 12px;
+      border-radius: 7px;
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      font-family: inherit;
+      transition: border-color 0.15s, background 0.15s, transform 0.08s;
+    }
+    .btn:hover { border-color: var(--accent); background: var(--accent-soft); }
+    .btn:active { transform: translateY(1px); }
+    .btn-primary {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: #fff;
+    }
+    .btn-primary:hover { background: #2563eb; border-color: #2563eb; color: #fff; }
+    .btn-green {
+      background: var(--green);
+      border-color: var(--green);
+      color: #fff;
+    }
+    .btn-sm { padding: 5px 9px; font-size: 12px; }
+
+    /* Mobile topbar */
+    .mobile-bar {
+      display: none;
+      position: fixed;
+      top: 0; left: 0; right: 0;
+      height: 54px;
+      background: var(--bg-elevated);
+      border-bottom: 1px solid var(--border);
+      padding: 0 16px;
+      align-items: center;
+      justify-content: space-between;
+      z-index: 35;
+    }
+
+    /* Main content */
+    .main {
+      margin-left: 280px;
+      flex: 1;
+      padding: 34px 42px 72px;
+      max-width: 1200px;
+      width: 100%;
+    }
+
+    .hero {
+      background: linear-gradient(135deg, var(--bg-card), var(--bg-elevated));
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 28px 30px;
+      margin-bottom: 34px;
+      box-shadow: var(--shadow);
+    }
+    .badge-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 3px 10px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 600;
+      border: 1px solid var(--border);
+      background: var(--bg-elevated);
+      color: var(--text-muted);
+    }
+    .pill.blue { background: var(--accent-soft); color: var(--accent); border-color: transparent; }
+    .pill.green { background: var(--green-soft); color: var(--green); border-color: transparent; }
+    .pill.amber { background: var(--amber-soft); color: var(--amber); border-color: transparent; }
+    .pill.red { background: var(--red-soft); color: var(--red); border-color: transparent; }
+
+    h1 { margin: 0 0 10px; font-size: 28px; line-height: 1.25; }
+    h2 {
+      margin: 44px 0 14px;
+      font-size: 22px;
+      padding-bottom: 8px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      scroll-margin-top: 24px;
+    }
+    h3 { margin: 20px 0 8px; font-size: 16px; }
+    p { margin: 0 0 12px; color: var(--text); }
+    .muted { color: var(--text-muted); }
+
+    code {
+      font-family: var(--mono);
+      font-size: 0.9em;
+      background: var(--bg-code);
+      border: 1px solid var(--border);
+      padding: 1px 6px;
+      border-radius: 5px;
+    }
+    pre {
+      margin: 12px 0;
+      background: var(--bg-code);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 14px 16px;
+      overflow-x: auto;
+      font-family: var(--mono);
+      font-size: 13px;
+      line-height: 1.5;
+    }
+
+    .card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 18px 20px;
+      margin-bottom: 16px;
+    }
+    .grid-2 {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 16px;
+    }
+    .grid-3 {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 14px;
+    }
+
+    .callout {
+      border-left: 4px solid var(--accent);
+      background: var(--accent-soft);
+      padding: 12px 16px;
+      border-radius: 0 8px 8px 0;
+      margin: 14px 0;
+      font-size: 14px;
+    }
+    .callout.warn { border-left-color: var(--amber); background: var(--amber-soft); }
+    .callout.ok { border-left-color: var(--green); background: var(--green-soft); }
+
+    /* Tree visualization */
+    .tree-box {
+      background: var(--bg-code);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 14px;
+      font-family: var(--mono);
+      font-size: 12.5px;
+      line-height: 1.65;
+    }
+    .tree-line { display: flex; justify-content: space-between; gap: 8px; padding: 1px 4px; border-radius: 4px; }
+    .tree-line.added { background: var(--green-soft); color: var(--green); }
+    .tree-line.ignored { color: var(--text-muted); text-decoration: line-through; opacity: 0.72; }
+    .tree-line.exists { color: var(--accent); }
+    .tree-tag { font-size: 11px; opacity: 0.9; white-space: nowrap; }
+
+    /* Interactive GUI mockup */
+    .gui-shell {
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      overflow: hidden;
+      background: #14171d;
+      color: #e6edf3;
+      box-shadow: var(--shadow);
+      font-size: 12.5px;
+    }
+    .gui-zone {
+      cursor: pointer;
+      transition: outline 0.15s, background 0.15s;
+      position: relative;
+    }
+    .gui-zone:hover { outline: 2px solid rgba(59, 130, 246, 0.7); outline-offset: -2px; }
+    .gui-zone.selected-zone { outline: 2px solid #3b82f6; outline-offset: -2px; background: rgba(59, 130, 246, 0.08); }
+    .gui-top {
+      padding: 12px 14px;
+      border-bottom: 1px solid #2c3340;
+      background: #1b2028;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .gui-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+    .gui-fake-input {
+      background: #0e1116;
+      border: 1px solid #323946;
+      border-radius: 4px;
+      padding: 4px 8px;
+      font-family: var(--mono);
+      font-size: 11.5px;
+      color: #cbd5e1;
+      flex: 1;
+      min-width: 180px;
+    }
+    .gui-fake-btn {
+      background: #252c38;
+      border: 1px solid #3c4556;
+      border-radius: 4px;
+      padding: 4px 9px;
+      font-size: 11.5px;
+      color: #e2e8f0;
+    }
+    .gui-fake-btn.blue { background: #265ca8; border-color: #265ca8; color: #fff; }
+    .gui-fake-btn.green { background: #248042; border-color: #248042; color: #fff; }
+    .gui-body {
+      display: grid;
+      grid-template-columns: 1fr 290px;
+      min-height: 245px;
+    }
+    .gui-center { padding: 12px; border-right: 1px solid #2c3340; display: flex; flex-direction: column; gap: 8px; }
+    .gui-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 5px 8px;
+      border-radius: 5px;
+      background: rgba(255, 255, 255, 0.02);
+      font-family: var(--mono);
+      font-size: 11.5px;
+    }
+    .gui-item.active { background: rgba(59, 130, 246, 0.18); }
+    .gui-inspector { padding: 12px; background: #181c24; display: flex; flex-direction: column; gap: 8px; }
+    .gui-thumb {
+      height: 82px;
+      border: 1px dashed #3d4657;
+      border-radius: 6px;
+      display: grid;
+      place-items: center;
+      background: linear-gradient(135deg, #21293a, #171c26);
+      color: #93c5fd;
+      font-weight: 600;
+      font-size: 11.5px;
+      text-align: center;
+      padding: 8px;
+    }
+    .gui-bottom {
+      padding: 8px 14px;
+      border-top: 1px solid #2c3340;
+      background: #1b2028;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      font-size: 11.5px;
+      color: #a3b1c2;
+    }
+
+    /* Form controls */
+    .field-group { display: flex; flex-direction: column; gap: 5px; margin-bottom: 10px; }
+    .field-group label { font-size: 12.5px; font-weight: 600; color: var(--text-muted); }
+    input[type="text"], input[type="number"], select {
+      width: 100%;
+      padding: 8px 10px;
+      border-radius: 7px;
+      border: 1px solid var(--border);
+      background: var(--bg-code);
+      color: var(--text);
+      font-family: var(--mono);
+      font-size: 13px;
+    }
+    input[type="range"] { width: 100%; accent-color: var(--accent); }
+    .check-row {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      font-size: 13px;
+      cursor: pointer;
+    }
+
+    /* Tabs */
+    .tabs { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 14px; }
+    .tab-btn {
+      padding: 7px 13px;
+      border-radius: 7px;
+      border: 1px solid var(--border);
+      background: var(--bg-elevated);
+      color: var(--text-muted);
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 600;
+      font-family: inherit;
+    }
+    .tab-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+    .tab-panel { display: none; }
+    .tab-panel.active { display: block; }
+
+    /* Tables */
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13.5px;
+      margin: 10px 0;
+    }
+    th, td {
+      text-align: left;
+      padding: 9px 11px;
+      border-bottom: 1px solid var(--border);
+      vertical-align: top;
+    }
+    th { color: var(--text-muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.03em; }
+
+    /* Accordion FAQ */
+    details {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 12px 16px;
+      margin-bottom: 10px;
+    }
+    summary {
+      cursor: pointer;
+      font-weight: 600;
+      font-size: 14.5px;
+    }
+    details[open] summary { margin-bottom: 8px; color: var(--accent); }
+
+    .score-meter {
+      height: 10px;
+      background: var(--bg-code);
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      overflow: hidden;
+      margin: 8px 0;
+    }
+    .score-fill {
+      height: 100%;
+      transition: width 0.2s ease, background 0.2s ease;
+    }
+
+    @media (max-width: 960px) {
+      .mobile-bar { display: flex; }
+      .sidebar { transform: translateX(-100%); top: 54px; }
+      .sidebar.open { transform: translateX(0); }
+      .main { margin-left: 0; padding: 72px 18px 56px; }
+      .grid-2, .grid-3, .gui-body { grid-template-columns: 1fr; }
+      .gui-center { border-right: 0; border-bottom: 1px solid #2c3340; }
+    }
+  </style>
+</head>
+<body>
+  <header class="mobile-bar">
+    <strong>MiSTer Cover Scraper</strong>
+    <div style="display:flex; gap:8px;">
+      <button class="btn btn-sm" id="mobile-theme-btn" type="button">Tema</button>
+      <button class="btn btn-sm" id="mobile-menu-btn" type="button">Menú</button>
+    </div>
+  </header>
+
+  <aside class="sidebar" id="sidebar">
+    <div class="brand">
+      <div class="brand-icon">MCS</div>
+      <div>
+        <div class="brand-title">MiSTer Cover Scraper</div>
+        <div class="brand-sub">Manual ConsoleMode</div>
+      </div>
+    </div>
+
+    <ul class="nav-list" id="nav-list">
+      <li><a class="nav-link active" href="#flujo"><span class="nav-num">01</span>Cómo funciona</a></li>
+      <li><a class="nav-link" href="#gui"><span class="nav-num">02</span>Interfaz Gráfica (GUI)</a></li>
+      <li><a class="nav-link" href="#bulk"><span class="nav-num">03</span>Carga Masiva (Bulk)</a></li>
+      <li><a class="nav-link" href="#matcher"><span class="nav-num">04</span>Simulador de Matching</a></li>
+      <li><a class="nav-link" href="#conexion"><span class="nav-num">05</span>Local, SMB y SFTP/Internet</a></li>
+      <li><a class="nav-link" href="#cli"><span class="nav-num">06</span>Generador de Comandos CLI</a></li>
+      <li><a class="nav-link" href="#reglas"><span class="nav-num">07</span>Escaneo y Conversión PNG</a></li>
+      <li><a class="nav-link" href="#consolemode"><span class="nav-num">08</span>ConsoleMode y FAQ</a></li>
+    </ul>
+
+    <div class="sidebar-footer">
+      <button class="btn" id="theme-toggle" type="button">Cambiar a tema claro</button>
+      <div class="brand-sub" style="text-align:center;">Offline · Rust + SFTP + egui</div>
+    </div>
+  </aside>
+
+  <main class="main">
+    <section class="hero">
+      <div class="badge-row">
+        <span class="pill blue">MiSTer FPGA ConsoleMode</span>
+        <span class="pill green">GUI + CLI en Rust</span>
+        <span class="pill amber">Local / SMB / SFTP por Internet</span>
+      </div>
+      <h1>Manual de Uso: MiSTer Cover Scraper</h1>
+      <p class="muted">
+        Esta aplicación enlaza automáticamente tu carpeta local de portadas (por ejemplo <code>sony playstation</code>)
+        con tu carpeta de juegos de MiSTer FPGA (por ejemplo <code>PSX</code> y sus subcarpetas), creando la carpeta
+        <code>media/</code> esperada por <strong>Retro-Remake ConsoleMode</strong> y subiendo solo los covers faltantes
+        con el nombre exacto de cada ROM en formato <code>.png</code>.
+      </p>
+      <div class="callout ok" style="margin-bottom:0;">
+        <strong>Sin depender de internet para buscar portadas:</strong> todo el emparejamiento se ejecuta localmente
+        comparando nombres entre tus ROMs y tus imágenes, y opcionalmente usa conexión <strong>SFTP/SSH</strong> para
+        leer y escribir directamente en el almacenamiento de tu MiSTer FPGA (en LAN, Tailscale/VPN o internet).
+      </div>
+    </section>
+
+    <!-- SECTION 1 -->
+    <section id="flujo">
+      <h2><span>01</span>Cómo funciona paso a paso</h2>
+      <p>
+        En ConsoleMode, el frontend busca las carátulas dentro de una subcarpeta llamada <code>media/</code> con el
+        <strong>mismo nombre exacto del archivo del juego</strong> (sin la extensión del ROM) y extensión <code>.png</code>.
+        El flujo completo sigue cuatro fases:
+      </p>
+      <div class="grid-3" style="margin-bottom:18px;">
+        <div class="card">
+          <h3>1. Escanea juegos</h3>
+          <p class="muted" style="font-size:13.5px;">
+            Recorre la carpeta elegida y sus subcarpetas. Ignora <code>media/</code>, BIOS (<code>boot.rom</code>,
+            <code>scph*.bin</code>), saves y pistas <code>.bin</code> redundantes si hay un <code>.cue</code>.
+          </p>
+        </div>
+        <div class="card">
+          <h3>2. Empareja portadas</h3>
+          <p class="muted" style="font-size:13.5px;">
+            Normaliza regiones, <code>(Disc 1)</code>, acentos, <code>_</code> de Libretro, artículos (<code>, The</code>)
+            y números romanos (<code>VII</code> ↔ <code>7</code>) evitando cruzar secuelas.
+          </p>
+        </div>
+        <div class="card">
+          <h3>3. Crea <code>media/</code> y copia</h3>
+          <p class="muted" style="font-size:13.5px;">
+            Omite portadas que ya existan, convierte <code>.jpg</code>/<code>.webp</code>/<code>.bmp</code>/<code>.gif</code>
+            a <code>.png</code> y guarda o sube cada archivo por SFTP con el nombre exacto del ROM.
+          </p>
+        </div>
+      </div>
+
+      <div class="card">
+        <div style="display:flex; flex-wrap:wrap; justify-content:space-between; align-items:center; gap:10px; margin-bottom:12px;">
+          <strong>Demostración visual de carpetas (Ejemplo real con PSX)</strong>
+          <div style="display:flex; gap:6px;">
+            <button class="btn btn-sm btn-primary" id="flow-root-btn" type="button">Raíz: &lt;juegos&gt;/media (ConsoleMode)</button>
+            <button class="btn btn-sm" id="flow-sub-btn" type="button">Por cada subcarpeta</button>
+          </div>
+        </div>
+        <div class="grid-3" id="flow-demo-grid"></div>
+      </div>
+    </section>
+
+    <!-- SECTION 2 -->
+    <section id="gui">
+      <h2><span>02</span>Interfaz Gráfica de Escritorio (GUI)</h2>
+      <p>
+        Ejecuta <code>mister-cover-scraper.exe</code> sin argumentos (o con <code>mister-cover-scraper.exe gui</code>)
+        para abrir la aplicación visual. Haz clic en cualquiera de las cuatro zonas del esquema interactivo para ver cómo usarla:
+      </p>
+
+      <div class="gui-shell">
+        <div class="gui-zone gui-top selected-zone" data-zone="top">
+          <div class="gui-row">
+            <strong>MiSTer Cover Scraper (ConsoleMode)</strong>
+            <span class="gui-fake-btn blue">Carpeta Local / SMB</span>
+            <span class="gui-fake-btn">MiSTer Remoto (SFTP / SSH)</span>
+          </div>
+          <div class="gui-row">
+            <span style="min-width:110px;">Juegos / Remoto:</span>
+            <span class="gui-fake-input">/media/fat/games/PSX   (o D:\MiSTer\games\PSX)</span>
+            <span class="gui-fake-btn">Probar conexión</span>
+            <span class="gui-fake-btn">Explorar MiSTer...</span>
+          </div>
+          <div class="gui-row">
+            <span style="min-width:110px;">Imágenes:</span>
+            <span class="gui-fake-input">D:\Covers\sony playstation</span>
+            <span class="gui-fake-btn">Elegir carpeta...</span>
+          </div>
+          <div class="gui-row">
+            <span class="gui-fake-btn">Similitud: 78%</span>
+            <span class="gui-fake-btn">☑ Convertir a PNG</span>
+            <span class="gui-fake-btn">☐ Sobrescribir</span>
+            <span class="gui-fake-btn blue">🔍 Analizar y Emparejar</span>
+            <span class="gui-fake-btn green">✅ Aplicar Covers Seleccionados (3)</span>
+          </div>
+        </div>
+
+        <div class="gui-body">
+          <div class="gui-zone gui-center" data-zone="center">
+            <div class="gui-row">
+              <span class="gui-fake-btn blue">Todos (5)</span>
+              <span class="gui-fake-btn">Listos (3)</span>
+              <span class="gui-fake-btn">Dudosos &lt;90% (1)</span>
+              <span class="gui-fake-btn">Sin cover (1)</span>
+              <span class="gui-fake-btn">Ya existen (1)</span>
+            </div>
+            <div class="gui-item active">
+              <span>☑</span>
+              <span style="color:#4ade80;">[Emparejado]</span>
+              <span>[RPG] Final Fantasy VII (USA) (Disc 1).chd → 97% · Final Fantasy 7 (USA).png</span>
+            </div>
+            <div class="gui-item">
+              <span>☑</span>
+              <span style="color:#4ade80;">[Emparejado]</span>
+              <span>Crash Bandicoot (USA).chd → 100% · Crash Bandicoot (USA).jpg</span>
+            </div>
+            <div class="gui-item">
+              <span>☑</span>
+              <span style="color:#fbbf24;">[Emparejado]</span>
+              <span>Castelvania - Symphny (USA).cue → 84% · Castlevania - Symphony of the Night (USA).png</span>
+            </div>
+            <div class="gui-item">
+              <span>☐</span>
+              <span style="color:#60a5fa;">[Ya existe]</span>
+              <span>Metal Gear Solid (USA) (Disc 1).chd → 100% · Metal Gear Solid (USA).png</span>
+            </div>
+            <div class="gui-item">
+              <span>☐</span>
+              <span style="color:#f87171;">[Sin cover]</span>
+              <span>Homebrew Demo.chd → —</span>
+            </div>
+          </div>
+
+          <div class="gui-zone gui-inspector" data-zone="inspector">
+            <strong>Inspector y Asignación Manual</strong>
+            <div style="font-size:11px; color:#94a3b8;">
+              Final Fantasy VII (USA) (Disc 1).chd<br>
+              Destino: /media/fat/games/PSX/media/Final Fantasy VII (USA) (Disc 1).png
+            </div>
+            <div class="gui-thumb">Vista previa de portada<br>(miniatura cargada bajo demanda)</div>
+            <div style="font-size:11px;"><strong>Mejores sugerencias (Top 5):</strong></div>
+            <div class="gui-fake-btn">✔ [97% · Título exacto] Final Fantasy 7 (USA).png</div>
+            <div class="gui-fake-btn">→ [94% · Título exacto] Final Fantasy VII (Japan).png</div>
+            <div class="gui-fake-input">Buscar en todas las portadas...</div>
+          </div>
+        </div>
+
+        <div class="gui-zone gui-bottom" data-zone="bottom">
+          <span>Análisis completado: 5 juegos, 1200 portadas indexadas (3 listas, 1 ya existe, 1 sin cover).</span>
+          <span>Barra de progreso en tiempo real</span>
+        </div>
+      </div>
+
+      <div class="card" id="gui-zone-detail" style="margin-top:14px;"></div>
+    </section>
+
+    <!-- SECTION 2B: BULK UPLOADER -->
+    <section id="bulk">
+      <h2><span>03</span>Carga Masiva, Comprimidos (.7z/.zip/.rar) y BIN/CUE → CHD</h2>
+      <p>
+        La pestaña <strong>📦 Cargar Juegos (Bulk)</strong> (y el subcomando CLI <code>upload</code>) permite subir juegos
+        nuevos a tu MiSTer FPGA en lote: detecta la consola de cada juego, lee comprimidos internamente, puede convertir
+        discos <code>.bin</code>/<code>.cue</code> (y <code>.gdi</code>) a <code>.chd</code> al vuelo y genera su carátula <code>.png</code>
+        dentro de <code>media/</code> en la misma operación.
+      </p>
+      <div class="grid-2">
+        <div class="card">
+          <h3>Arrastrar, carpetas (.bin/.cue) y streaming</h3>
+          <p class="muted" style="font-size:13.5px;">
+            Arrastra archivos sueltos, comprimidos o carpetas a la ventana. Si agregas una carpeta con <code>.cue</code>/<code>.gdi</code>/<code>.m3u</code>
+            y múltiples pistas <code>.bin</code>, se mantienen unidos sin generar covers por pista y se transfieren en bloques de <code>256 KiB</code>.
+          </p>
+        </div>
+        <div class="card">
+          <h3>Lectura interna de .zip, .7z y .rar</h3>
+          <p class="muted" style="font-size:13.5px;">
+            Inspecciona cabeceras sin descomprimir primero para clasificar ROMs o sets de disco (conservando intactos los <code>.zip</code> de Arcade/MAME y agrupando volúmenes <code>.partXX.rar</code>). Extrae nativamente o con respaldo de <code>7-Zip</code> / <code>UnRAR</code> / <code>bsdtar</code>.
+          </p>
+        </div>
+        <div class="card">
+          <h3>Conversión opcional BIN/CUE → CHD</h3>
+          <p class="muted" style="font-size:13.5px;">
+            Activa <strong>💿 Convertir BIN/CUE → CHD</strong> (o <code>--convert-to-chd</code> en CLI) para comprimir automáticamente sets de disco en un solo <code>.chd</code> v5 mediante <code>chd-rs</code> integrado (con respaldo opcional a <code>chdman.exe</code> y limpieza de BOM/rutas CUE o playlists <code>.m3u</code>).
+          </p>
+        </div>
+        <div class="card">
+          <h3>Control temporal y por juego</h3>
+          <p class="muted" style="font-size:13.5px;">
+            En el inspector derecho puedes ver los archivos internos de cada <code>.zip/.7z/.rar</code>, activar/desactivar CHD por juego concreto y configurar una carpeta temporal personalizada si tu disco principal tiene poco espacio.
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <!-- SECTION 3 -->
+    <section id="matcher">
+      <h2><span>04</span>Simulador Interactivo del Motor de Emparejamiento</h2>
+      <p>
+        El motor de <code>src/matcher.rs</code> evalúa cada juego en 4 niveles de prioridad. Prueba tus propios nombres
+        o selecciona un caso de ejemplo para ver exactamente cómo normaliza títulos, regiones y números de secuela:
+      </p>
+
+      <div class="card">
+        <div class="tabs" id="matcher-presets">
+          <button class="tab-btn active" type="button" data-game="Crash Bandicoot (USA)" data-cover="Crash Bandicoot (USA)">1. Exacto (100%)</button>
+          <button class="tab-btn" type="button" data-game="Dungeons & Dragons: Shadow over Mystara (USA)" data-cover="Dungeons _ Dragons - Shadow over Mystara (USA)">2. Libretro _ ↔ &amp;</button>
+          <button class="tab-btn" type="button" data-game="Final Fantasy VII (USA) (Disc 1)" data-cover="Final Fantasy 7 (USA)">3. Romano + (Disc 1)</button>
+          <button class="tab-btn" type="button" data-game="Legend of Zelda, The - A Link to the Past (USA)" data-cover="The Legend of Zelda - A Link to the Past (USA)">4. Artículo ", The"</button>
+          <button class="tab-btn" type="button" data-game="Pokémon Red Version (USA)" data-cover="Pokemon Red Version (USA, Europe)">5. Acentos + Región</button>
+          <button class="tab-btn" type="button" data-game="Crash Bandicoot 2 - Cortex Strikes Back (USA)" data-cover="Crash Bandicoot 3 - Warped (USA)">6. Guardia de secuelas</button>
+          <button class="tab-btn" type="button" data-game="Castelvania - Symphny of the Night (USA)" data-cover="Castlevania - Symphony of the Night (USA)">7. Error tipográfico (Fuzzy)</button>
+        </div>
+
+        <div class="grid-2">
+          <div class="field-group">
+            <label for="sim-game">Nombre del archivo del juego (sin extensión)</label>
+            <input id="sim-game" type="text" value="Crash Bandicoot (USA)">
+          </div>
+          <div class="field-group">
+            <label for="sim-cover">Nombre del archivo de portada (sin extensión)</label>
+            <input id="sim-cover" type="text" value="Crash Bandicoot (USA)">
+          </div>
+        </div>
+
+        <div class="field-group" style="max-width:420px;">
+          <label for="sim-threshold">Umbral mínimo de similitud: <strong id="sim-threshold-label">78%</strong></label>
+          <input id="sim-threshold" type="range" min="50" max="100" value="78">
+        </div>
+
+        <div id="sim-output"></div>
+      </div>
+    </section>
+
+    <!-- SECTION 4 -->
+    <section id="conexion">
+      <h2><span>05</span>Conexión al Almacenamiento de la MiSTer FPGA</h2>
+      <p>
+        Puedes elegir el método que mejor se adapte a cómo accedes a tu tarjeta SD, USB o NVMe de la MiSTer:
+      </p>
+
+      <div class="tabs" data-tabgroup="conn">
+        <button class="tab-btn active" type="button" data-tab="conn-local">Carpeta Local / SD / USB</button>
+        <button class="tab-btn" type="button" data-tab="conn-smb">Red Local SMB (Windows)</button>
+        <button class="tab-btn" type="button" data-tab="conn-sftp-lan">SFTP / SSH (Red Local)</button>
+        <button class="tab-btn" type="button" data-tab="conn-sftp-net">SFTP por Internet (Tailscale / VPN)</button>
+      </div>
+
+      <div class="card">
+        <div class="tab-panel active" id="conn-local">
+          <h3>Carpeta local o tarjeta SD conectada al PC</h3>
+          <p>Ideal si conectaste la microSD o disco USB/NVMe directamente al ordenador.</p>
+          <ul>
+            <li>Selecciona el modo <strong>Carpeta Local / SMB</strong> en la parte superior.</li>
+            <li>Elige la carpeta del sistema, por ejemplo <code>E:\games\PSX</code>.</li>
+            <li>La carpeta <code>media</code> se creará en <code>E:\games\PSX\media</code>.</li>
+          </ul>
+        </div>
+
+        <div class="tab-panel" id="conn-smb">
+          <h3>Recurso compartido SMB en Windows</h3>
+          <p>Si tienes Samba/SMB activado en tu MiSTer, Windows puede acceder a sus carpetas por ruta de red UNC:</p>
+          <pre>\\mister\fat\games\PSX
+\\192.168.1.50\fat\games\PSX</pre>
+          <p class="muted" style="font-size:13.5px;">
+            Pega esa ruta en el campo <strong>Carpeta de juegos</strong> bajo el modo <strong>Carpeta Local / SMB</strong>.
+          </p>
+        </div>
+
+        <div class="tab-panel" id="conn-sftp-lan">
+          <h3>SFTP / SSH directo en red local (Puerto 22)</h3>
+          <p>No requiere montar unidades de red en Windows ni sacar la SD. Usa el servidor SSH incluido en MiSTerOS:</p>
+          <table>
+            <thead>
+              <tr><th>Campo</th><th>Valor típico en MiSTer</th><th>Notas</th></tr>
+            </thead>
+            <tbody>
+              <tr><td>Host / IP</td><td><code>192.168.1.50</code> o <code>mister.local</code></td><td>Visible en el menú OSD de MiSTer o tu router.</td></tr>
+              <tr><td>Puerto</td><td><code>22</code></td><td>Puerto estándar SSH/SFTP.</td></tr>
+              <tr><td>Usuario</td><td><code>root</code></td><td>Usuario por defecto en MiSTer.</td></tr>
+              <tr><td>Contraseña</td><td><code>1</code></td><td>Contraseña por defecto de MiSTerOS (no se guarda en disco).</td></tr>
+              <tr><td>Ruta remota</td><td><code>/media/fat/games/PSX</code></td><td>Usa <strong>Explorar MiSTer...</strong> para navegar <code>/media/fat/games</code>, <code>/media/usb0/games</code> o <code>/media/usb1/games</code>.</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="tab-panel" id="conn-sftp-net">
+          <h3>Conectarse vía Internet de forma segura</h3>
+          <p>
+            Como el protocolo es <strong>SFTP sobre SSH (puerto 22)</strong>, funciona tanto en red local como por internet.
+          </p>
+          <div class="callout warn">
+            <strong>Recomendación de seguridad:</strong> nunca expongas el puerto 22 de tu MiSTer directamente a internet usando la contraseña por defecto <code>1</code>.
+          </div>
+          <ul>
+            <li><strong>Opción recomendada (Tailscale / WireGuard):</strong> instala Tailscale en tu router/PC o red y conecta usando el nombre o IP de tu tailnet (ej. <code>mi-mister.tailnet.ts.net</code>).</li>
+            <li><strong>Con clave privada SSH:</strong> selecciona <strong>Clave SSH</strong> en la GUI o pasa <code>--key "C:\ruta\id_ed25519"</code> en la CLI (y cambia la contraseña de <code>root</code> en la MiSTer con <code>passwd</code>).</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <!-- SECTION 5 -->
+    <section id="cli">
+      <h2><span>06</span>Generador Interactivo de Comandos CLI</h2>
+      <p>
+        Además de la GUI, puedes automatizar cargas por lote o scripts desde PowerShell usando los subcomandos
+        <code>sync</code>, <code>upload</code> y <code>list-remote</code>. Configura las opciones y copia el comando generado:
+      </p>
+
+      <div class="card">
+        <div class="tabs" id="cli-subcmd-tabs">
+          <button class="tab-btn active" type="button" data-cmd="sync">Subcomando: sync</button>
+          <button class="tab-btn" type="button" data-cmd="upload">Subcomando: upload (Bulk)</button>
+          <button class="tab-btn" type="button" data-cmd="list-remote">Subcomando: list-remote</button>
+        </div>
+
+        <div class="grid-2">
+          <div>
+            <div class="field-group">
+              <label for="cli-mode">Destino</label>
+              <select id="cli-mode">
+                <option value="local">Carpeta Local / SMB</option>
+                <option value="sftp" selected>MiSTer Remoto (SFTP / SSH)</option>
+              </select>
+            </div>
+            <div class="field-group" id="cli-games-wrap">
+              <label for="cli-games" id="cli-games-label">Ruta de juegos (--games)</label>
+              <input id="cli-games" type="text" value="/media/fat/games/PSX">
+            </div>
+            <div class="field-group" id="cli-sources-wrap" style="display:none;">
+              <label for="cli-sources">Orígenes a subir (--sources, separados por coma)</label>
+              <input id="cli-sources" type="text" value="D:\Descargas\Juego.gba, D:\Descargas\Castlevania (USA)">
+            </div>
+            <div class="field-group" id="cli-images-wrap">
+              <label for="cli-images">Carpeta de imágenes (--images)</label>
+              <input id="cli-images" type="text" value="D:\Covers\sony playstation">
+            </div>
+          </div>
+
+          <div id="cli-sftp-fields">
+            <div class="grid-2">
+              <div class="field-group">
+                <label for="cli-host">Host / IP (--sftp)</label>
+                <input id="cli-host" type="text" value="192.168.1.50">
+              </div>
+              <div class="field-group">
+                <label for="cli-port">Puerto (--port)</label>
+                <input id="cli-port" type="number" value="22" min="1" max="65535">
+              </div>
+            </div>
+            <div class="grid-2">
+              <div class="field-group">
+                <label for="cli-user">Usuario (--user)</label>
+                <input id="cli-user" type="text" value="root">
+              </div>
+              <div class="field-group">
+                <label for="cli-auth">Autenticación</label>
+                <select id="cli-auth">
+                  <option value="default">Contraseña por defecto ("1")</option>
+                  <option value="env">Variable $env:MISTER_SSH_PASSWORD</option>
+                  <option value="key">Clave privada SSH (--key)</option>
+                </select>
+              </div>
+            </div>
+            <div class="field-group" id="cli-key-wrap" style="display:none;">
+              <label for="cli-key">Ruta clave privada (--key)</label>
+              <input id="cli-key" type="text" value="C:\Users\TuUsuario\.ssh\id_ed25519">
+            </div>
+          </div>
+        </div>
+
+        <div id="cli-sync-options">
+          <div class="grid-3" style="margin-top:6px;">
+            <div class="field-group">
+              <label for="cli-threshold">Umbral (--threshold): <strong id="cli-thresh-val">0.78</strong></label>
+              <input id="cli-threshold" type="range" min="0.50" max="1.00" step="0.01" value="0.78">
+            </div>
+            <div style="display:flex; flex-direction:column; gap:7px; justify-content:center;">
+              <label class="check-row"><input id="cli-dry" type="checkbox" checked> <span><code>--dry-run</code> (simulación)</span></label>
+              <label class="check-row"><input id="cli-overwrite" type="checkbox"> <span><code>--overwrite</code> (sobrescribir)</span></label>
+              <label class="check-row"><input id="cli-keep" type="checkbox"> <span><code>--keep-format</code> (no convertir a PNG)</span></label>
+            </div>
+            <div style="display:flex; flex-direction:column; gap:7px; justify-content:center;">
+              <label class="check-row"><input id="cli-per-sub" type="checkbox"> <span><code>--per-subfolder-media</code></span></label>
+              <label class="check-row"><input id="cli-no-rec" type="checkbox"> <span><code>--no-recursive-images</code></span></label>
+              <label class="check-row"><input id="cli-allow-cross" type="checkbox"> <span><code>--allow-cross-system</code> (permitir otra consola)</span></label>
+              <label class="check-row" id="cli-convert-chd-wrap" style="display:none;"><input id="cli-convert-chd" type="checkbox"> <span><code>--convert-to-chd</code> (BIN/CUE → CHD)</span></label>
+            </div>
+          </div>
+        </div>
+
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-top:10px;">
+          <strong>Comando PowerShell listo para ejecutar:</strong>
+          <button class="btn btn-sm btn-primary" id="copy-cli-btn" type="button">Copiar comando</button>
+        </div>
+        <pre id="cli-output"></pre>
+      </div>
+    </section>
+
+    <!-- SECTION 6 -->
+    <section id="reglas">
+      <h2><span>07</span>Reglas de Escaneo, Extensiones y Conversión PNG</h2>
+      <div class="grid-2">
+        <div class="card">
+          <h3>Deduplicación automática de discos y BIOS</h3>
+          <ul>
+            <li><strong>Carpetas ignoradas:</strong> <code>media/</code>, carpetas ocultas que empiecen por <code>.</code>, <code>System Volume Information</code> y <code>$RECYCLE.BIN</code>.</li>
+            <li><strong>Pistas de CD (PSX, Saturn, Mega-CD, PC Engine CD):</strong> si una carpeta contiene un archivo <code>.cue</code>, <code>.ccd</code> o <code>.gdi</code>, las pistas <code>.bin</code>, <code>.img</code>, <code>.raw</code>, <code>.sub</code> y <code>.wav</code> de esa misma carpeta se ignoran para no duplicar portadas.</li>
+            <li><strong>Cartuchos <code>.bin</code>:</strong> si una carpeta <em>no</em> tiene hoja <code>.cue/.ccd/.gdi</code> (por ejemplo Mega Drive o Atari), los <code>.bin</code> se mantienen como juegos válidos.</li>
+            <li><strong>Archivos no-ROM ignorados:</strong> BIOS (<code>boot.rom</code>–<code>boot3.rom</code>, <code>scph*.bin</code>, <code>gba_bios.bin</code>, <code>neogeo.zip</code>), saves (<code>.sav</code>, <code>.srm</code>, <code>.mcd</code>), imágenes y documentación (<code>README.md</code>, <code>.txt</code>).</li>
+          </ul>
+        </div>
+
+        <div class="card">
+          <h3>Formatos soportados y optimización PNG</h3>
+          <ul>
+            <li><strong>Imágenes de entrada:</strong> <code>.png</code>, <code>.jpg</code>, <code>.jpeg</code>, <code>.webp</code>, <code>.bmp</code> y <code>.gif</code>.</li>
+            <li><strong>Fast-path PNG:</strong> si la portada ya es <code>.png</code> y comienza con la cabecera PNG válida (<code>\x89PNG\r\n\x1a\n</code>), se copia o sube directamente sin recodificar.</li>
+            <li><strong>Conversión automática:</strong> cualquier <code>.jpg</code>, <code>.webp</code>, <code>.bmp</code> o <code>.gif</code> se convierte en memoria a <code>.png</code> (salvo que marques <em>Conservar formato</em> / <code>--keep-format</code>).</li>
+            <li><strong>ROMs y archivos reconocidos:</strong> <code>.chd</code>, <code>.cue</code>, <code>.gdi</code>, <code>.m3u</code>, <code>.iso</code>, <code>.cso</code>, <code>.pbp</code>, <code>.nes</code>, <code>.sfc</code>, <code>.smc</code>, <code>.n64</code>, <code>.z64</code>, <code>.gb</code>, <code>.gbc</code>, <code>.gba</code>, <code>.md</code>, <code>.gen</code>, <code>.sms</code>, <code>.gg</code>, <code>.pce</code>, <code>.mra</code>, <code>.zip</code>, <code>.7z</code>, <code>.rar</code> (en carga masiva con extracción interna) y formatos de microordenadores (Amiga, C64, MSX, Spectrum, etc.).</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <!-- SECTION 7 -->
+    <section id="consolemode">
+      <h2><span>08</span>Integración con ConsoleMode y Preguntas Frecuentes</h2>
+
+      <div class="callout">
+        <strong>Paso final recomendado dentro de MiSTer ConsoleMode:</strong><br>
+        Después de copiar o subir nuevas portadas a <code>media/</code>, ve en ConsoleMode a
+        <strong>Settings → Game Library</strong> y ejecuta <strong>Rebuild Game Database</strong> y/o
+        <strong>Optimize Artwork</strong> para que el menú refresque su caché e indexe las nuevas carátulas.
+      </div>
+
+      <details open>
+        <summary>¿Dónde guarda la aplicación la configuración y mis contraseñas?</summary>
+        <p class="muted">
+          La configuración (rutas recientes, host SFTP, usuario, clave privada y opciones de análisis) se guarda en
+          <code>%APPDATA%\mister\cover-scraper\config\config.json</code>. Por seguridad, las contraseñas SSH y las frases de paso
+          están excluidas de la serialización y <strong>nunca se escriben en disco</strong>.
+        </p>
+      </details>
+
+      <details>
+        <summary>Tengo juegos multidisco (.m3u o varios .chd) en subcarpetas. ¿Cómo los nombra?</summary>
+        <p class="muted">
+          Cada juego encontrado conserva su nombre exacto de archivo sin extensión (<code>stem</code>) al guardarse en
+          <code>media/</code>. Por ejemplo, <code>RPG\Final Fantasy VII (USA) (Disc 1).chd</code> genera
+          <code>PSX\media\Final Fantasy VII (USA) (Disc 1).png</code> en modo raíz (o dentro de <code>PSX\RPG\media\</code> si usas
+          <em>Por cada subcarpeta</em>). Si usas <code>.m3u</code> junto a discos en la misma carpeta, ConsoleMode usará la portada
+          que coincida con el archivo que selecciones en el menú.
+        </p>
+      </details>
+
+      <details>
+        <summary>¿Cómo evita poner portadas de PSX a juegos de GBA con el mismo título?</summary>
+        <p class="muted">
+          El escáner detecta automáticamente la consola del juego (por su extensión como <code>.gba</code> o carpeta como <code>PSX/</code>)
+          y la consola de cada portada (por su carpeta o etiquetas explícitas dentro de la carpeta de imágenes). Con la opción
+          <strong>Solo misma consola</strong> activada por defecto, una portada detectada como <code>PSX</code> nunca se asigna a un
+          juego detectado como <code>GBA</code>. Si en tu carpeta de imágenes mezclas sistemas sin separarlos, verás un aviso en pantalla
+          y siempre puedes desactivar esa casilla (o usar <code>--allow-cross-system</code> en CLI) si quieres permitir cruces manualmente.
+        </p>
+      </details>
+
+      <details>
+        <summary>¿Qué pasa si dos portadas tienen nombres muy parecidos como "Game 2" y "Game 3"?</summary>
+        <p class="muted">
+          El motor aplica una penalización de <code>-22%</code> cuando los tokens numéricos del título difieren, manteniendo estos
+          falsos positivos por debajo del umbral por defecto (<code>78%</code>). En la GUI aparecerán en la pestaña
+          <strong>Sin cover</strong> o <strong>Dudosos</strong> para que asignes la correcta con un clic.
+        </p>
+      </details>
+
+      <details>
+        <summary>La conexión SFTP falla o da timeout al probar con mi MiSTer.</summary>
+        <p class="muted">
+          Verifica que: (1) la MiSTer esté encendida y conectada a la misma red o Tailscale, (2) el servicio SSH esté activo en
+          MiSTerOS (viene habilitado por defecto en el puerto 22), (3) el usuario sea <code>root</code> y la contraseña sea <code>1</code>
+          (si no la cambiaste), y (4) pruebes usar directamente la IP numérica si <code>mister.local</code> no resuelve por mDNS en tu Windows.
+        </p>
+      </details>
+    </section>
+  </main>
+
+  <script>
+    (function () {
+      // 1. Theme toggle
+      const htmlEl = document.documentElement;
+      const themeBtn = document.getElementById("theme-toggle");
+      const mobileThemeBtn = document.getElementById("mobile-theme-btn");
+      function updateThemeText() {
+        const isDark = htmlEl.getAttribute("data-theme") === "dark";
+        themeBtn.textContent = isDark ? "Cambiar a tema claro" : "Cambiar a tema oscuro";
+        mobileThemeBtn.textContent = isDark ? "Claro" : "Oscuro";
+      }
+      function toggleTheme() {
+        const next = htmlEl.getAttribute("data-theme") === "dark" ? "light" : "dark";
+        htmlEl.setAttribute("data-theme", next);
+        updateThemeText();
+      }
+      themeBtn.addEventListener("click", toggleTheme);
+      mobileThemeBtn.addEventListener("click", toggleTheme);
+      updateThemeText();
+
+      // 2. Mobile menu + Scroll-spy
+      const sidebar = document.getElementById("sidebar");
+      const mobileMenuBtn = document.getElementById("mobile-menu-btn");
+      const navLinks = Array.from(document.querySelectorAll(".nav-link"));
+
+      mobileMenuBtn.addEventListener("click", function () {
+        sidebar.classList.toggle("open");
+      });
+      navLinks.forEach(function (link) {
+        link.addEventListener("click", function () {
+          sidebar.classList.remove("open");
+        });
+      });
+
+      const sections = navLinks
+        .map(function (l) { return document.querySelector(l.getAttribute("href")); })
+        .filter(Boolean);
+
+      if ("IntersectionObserver" in window) {
+        const observer = new IntersectionObserver(function (entries) {
+          entries.forEach(function (entry) {
+            if (entry.isIntersecting) {
+              const id = "#" + entry.target.id;
+              navLinks.forEach(function (l) {
+                l.classList.toggle("active", l.getAttribute("href") === id);
+              });
+            }
+          });
+        }, { rootMargin: "-20% 0px -65% 0px" });
+        sections.forEach(function (sec) { observer.observe(sec); });
+      }
+
+      // 3. Interactive folder-flow demo
+      const flowGrid = document.getElementById("flow-demo-grid");
+      const flowRootBtn = document.getElementById("flow-root-btn");
+      const flowSubBtn = document.getElementById("flow-sub-btn");
+
+      function renderFlow(mode) {
+        flowRootBtn.className = "btn btn-sm " + (mode === "root" ? "btn-primary" : "");
+        flowSubBtn.className = "btn btn-sm " + (mode === "sub" ? "btn-primary" : "");
+
+        const destLines = mode === "root"
+          ? [
+              { cls: "", text: "PSX/media/", tag: "creada" },
+              { cls: "added", text: "├── Crash Bandicoot (USA).png", tag: "JPG→PNG" },
+              { cls: "added", text: "├── Final Fantasy VII (USA) (Disc 1).png", tag: "subcarpeta" },
+              { cls: "added", text: "└── Castlevania - Symphony of the Night (USA).png", tag: "vía .cue" },
+              { cls: "exists", text: "    (Metal Gear Solid (USA).png ya existía)", tag: "omitido" }
+            ]
+          : [
+              { cls: "", text: "PSX/media/", tag: "raíz" },
+              { cls: "added", text: "└── Crash Bandicoot (USA).png", tag: "JPG→PNG" },
+              { cls: "", text: "PSX/RPG/media/", tag: "subcarpeta" },
+              { cls: "added", text: "└── Final Fantasy VII (USA) (Disc 1).png", tag: "PNG" },
+              { cls: "", text: "PSX/Castlevania (USA)/media/", tag: "subcarpeta" },
+              { cls: "added", text: "└── Castlevania - Symphony of the Night (USA).png", tag: "vía .cue" }
+            ];
+
+        flowGrid.innerHTML =
+          '<div class="tree-box">' +
+            '<div style="color:var(--accent); font-weight:700; margin-bottom:6px;">Carpeta de juegos (PSX)</div>' +
+            '<div class="tree-line"><span>Crash Bandicoot (USA).chd</span><span class="tree-tag">ROM</span></div>' +
+            '<div class="tree-line"><span>RPG/Final Fantasy VII (USA) (Disc 1).chd</span><span class="tree-tag">ROM</span></div>' +
+            '<div class="tree-line"><span>Castlevania (USA)/Castlevania...Night (USA).cue</span><span class="tree-tag">CUE</span></div>' +
+            '<div class="tree-line ignored"><span>Castlevania (USA)/... (Track 1).bin</span><span class="tree-tag">pista</span></div>' +
+            '<div class="tree-line ignored"><span>boot.rom</span><span class="tree-tag">BIOS</span></div>' +
+          '</div>' +
+          '<div class="tree-box">' +
+            '<div style="color:var(--amber); font-weight:700; margin-bottom:6px;">Carpeta de imágenes (sony playstation)</div>' +
+            '<div class="tree-line"><span>Crash Bandicoot (USA).jpg</span><span class="tree-tag">100%</span></div>' +
+            '<div class="tree-line"><span>Named_Boxarts/Final Fantasy 7 (USA).png</span><span class="tree-tag">97%</span></div>' +
+            '<div class="tree-line"><span>Castlevania _ Symphony of the Night (USA).png</span><span class="tree-tag">97%</span></div>' +
+            '<div class="tree-line"><span>Metal Gear Solid (USA).png</span><span class="tree-tag">ya existe</span></div>' +
+          '</div>' +
+          '<div class="tree-box">' +
+            '<div style="color:var(--green); font-weight:700; margin-bottom:6px;">Resultado en MiSTer</div>' +
+            destLines.map(function (l) {
+              return '<div class="tree-line ' + l.cls + '"><span>' + l.text + '</span><span class="tree-tag">' + l.tag + '</span></div>';
+            }).join("") +
+          '</div>';
+      }
+      flowRootBtn.addEventListener("click", function () { renderFlow("root"); });
+      flowSubBtn.addEventListener("click", function () { renderFlow("sub"); });
+      renderFlow("root");
+
+      // 4. Interactive GUI Anatomy
+      const zoneDetails = {
+        top: {
+          title: "1. Barra Superior de Configuración y Acciones",
+          body: "Alterna entre <strong>Carpeta Local / SMB</strong> y <strong>MiSTer Remoto (SFTP / SSH)</strong>. En modo SFTP puedes probar la conexión con <strong>Probar conexión</strong> o abrir el explorador visual de carpetas remotas con <strong>Explorar MiSTer...</strong> (incluye atajos a <code>/media/fat/games</code>, <code>/media/usb0/games</code> y <code>/media/usb1/games</code>). El deslizador <strong>Similitud mínima</strong> reevalúa en vivo las coincidencias sin tener que re-escanear."
+        },
+        center: {
+          title: "2. Lista Virtualizada y Filtros de Estado",
+          body: "Muestra miles de juegos de forma fluida. Filtra rápidamente por <strong>Listos</strong>, <strong>Dudosos &lt;90%</strong> (para revisar coincidencias aproximadas antes de copiar), <strong>Sin cover</strong> o <strong>Ya existen</strong>. Usa las casillas de verificación para decidir exactamente qué portadas se copiarán o subirán."
+        },
+        inspector: {
+          title: "3. Inspector Lateral, Vista Previa y Asignación Manual",
+          body: "Al hacer clic en cualquier juego ves su ruta de origen, la ruta exacta de destino en <code>media/</code> y la miniatura del cover asignado. Debajo tienes las <strong>5 mejores sugerencias</strong> y un buscador en vivo sobre todas las portadas cargadas para enlazar o quitar manualmente cualquier carátula con un clic."
+        },
+        bottom: {
+          title: "4. Barra de Estado y Progreso en Tiempo Real",
+          body: "Muestra los mensajes de progreso durante el escaneo SFTP/local, el conteo de portadas listas/existentes y el avance archivo por archivo al copiar o subir, junto con el botón <strong>Cancelar</strong> por si deseas detener un lote grande."
+        }
+      };
+
+      const guiZones = Array.from(document.querySelectorAll(".gui-zone"));
+      const guiDetailEl = document.getElementById("gui-zone-detail");
+      function selectGuiZone(zoneKey) {
+        guiZones.forEach(function (z) {
+          z.classList.toggle("selected-zone", z.getAttribute("data-zone") === zoneKey);
+        });
+        const info = zoneDetails[zoneKey];
+        guiDetailEl.innerHTML = "<strong>" + info.title + "</strong><p style='margin:6px 0 0;' class='muted'>" + info.body + "</p>";
+      }
+      guiZones.forEach(function (z) {
+        z.addEventListener("click", function () {
+          selectGuiZone(z.getAttribute("data-zone"));
+        });
+      });
+      selectGuiZone("top");
+
+      // 5. Faithful JS mirror of src/matcher.rs
+      const ROMAN_MAP = {
+        ii: "2", iii: "3", iv: "4", v: "5", vi: "6", vii: "7", viii: "8",
+        ix: "9", x: "10", xi: "11", xii: "12", xiii: "13", xiv: "14", xv: "15"
+      };
+      const REGION_MAP = {
+        usa: "usa", us: "usa", u: "usa",
+        europe: "europe", eu: "europe", eur: "europe", e: "europe",
+        japan: "japan", jp: "japan", jpn: "japan", j: "japan",
+        world: "world", w: "world",
+        spain: "spain", es: "spain", spa: "spain",
+        france: "france", fr: "france", fre: "france",
+        germany: "germany", de: "germany", ger: "germany",
+        italy: "italy", it: "italy", ita: "italy",
+        brazil: "brazil", br: "brazil", bra: "brazil",
+        korea: "korea", kr: "korea", kor: "korea",
+        australia: "australia", au: "australia", aus: "australia",
+        asia: "asia", as: "asia"
+      };
+
+      function stripDiacritics(s) {
+        return s.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+      }
+      function stripBracketedTags(s) {
+        let out = "";
+        let p = 0, b = 0;
+        for (const ch of s) {
+          if (ch === "(") p++;
+          else if (ch === ")") p = Math.max(0, p - 1);
+          else if (ch === "[") b++;
+          else if (ch === "]") b = Math.max(0, b - 1);
+          else if (p === 0 && b === 0) out += ch;
+        }
+        return out;
+      }
+      function stripTrailingDisc(s) {
+        const trimmed = s.trim();
+        const lower = trimmed.toLowerCase();
+        for (const m of [" - disc ", " - disk ", " - cd ", " disc ", " disk ", " cd "]) {
+          const pos = lower.lastIndexOf(m);
+          if (pos !== -1) {
+            const suf = lower.slice(pos + m.length).trim();
+            if (suf.length > 0 && /^[0-9ab]+$/.test(suf)) {
+              return trimmed.slice(0, pos).trim();
+            }
+          }
+        }
+        return trimmed;
+      }
+      function stripLeadingNumPrefix(s) {
+        const t = s.trimStart();
+        const m = t.match(/^(\d+)(\s-\s|\.\s|_\s|\)\s|\.- )(.*)$/);
+        if (m && /[a-zA-Z]/.test(m[3])) return m[3].trim();
+        return null;
+      }
+      function moveTrailingArticle(s) {
+        const t = s.trim();
+        const lower = t.toLowerCase();
+        for (const [suf, art] of [[", the", "the"], [", a", "a"], [", an", "an"]]) {
+          if (lower.endsWith(suf)) {
+            const base = t.slice(0, t.length - suf.length).trim();
+            if (base) return art + " " + base;
+          }
+        }
+        for (const [needle, art] of [[", the - ", "the"], [", a - ", "a"], [", an - ", "an"]]) {
+          const pos = lower.indexOf(needle);
+          if (pos !== -1) {
+            const head = t.slice(0, pos).trim();
+            const tail = t.slice(pos + needle.length).trim();
+            if (head && tail) return art + " " + head + " " + tail;
+          }
+        }
+        return t;
+      }
+      function normalizeText(s, convertRoman) {
+        const folded = stripDiacritics(s.toLowerCase()).replace(/&/g, " and ");
+        let spaced = "";
+        for (const ch of folded) {
+          spaced += /[\p{L}\p{N}]/u.test(ch) ? ch : " ";
+        }
+        const toks = spaced.trim().split(/\s+/).filter(Boolean).map(function (tok) {
+          return convertRoman && ROMAN_MAP[tok] ? ROMAN_MAP[tok] : tok;
+        });
+        return toks.join(" ");
+      }
+      function stripConn(norm) {
+        return norm.split(/\s+/).filter(function (w) { return w && w !== "and"; }).join(" ");
+      }
+      function extractRegions(stem) {
+        const regs = [];
+        let rest = stem;
+        while (true) {
+          const open = rest.indexOf("(");
+          if (open === -1) break;
+          const after = rest.slice(open + 1);
+          const close = after.indexOf(")");
+          if (close === -1) break;
+          const content = after.slice(0, close).toLowerCase();
+          content.split(/[,/\-; ]+/).forEach(function (part) {
+            const tag = REGION_MAP[part.trim()];
+            if (tag && !regs.includes(tag)) regs.push(tag);
+          });
+          rest = after.slice(close + 1);
+        }
+        return regs;
+      }
+      function parseName(stem) {
+        const lowerStem = stem.toLowerCase();
+        const regions = extractRegions(stem);
+        const fullNorm = normalizeText(stem, false);
+        const fullNormNoConn = stripConn(fullNorm);
+        const withoutTags = stripBracketedTags(stem);
+        const noDisc = stripTrailingDisc(withoutTags);
+        const cleanTitle = normalizeText(moveTrailingArticle(noDisc), true);
+        const cleanTitleNoConn = stripConn(cleanTitle);
+        const altRaw = stripLeadingNumPrefix(noDisc);
+        const altNoPrefix = altRaw ? normalizeText(moveTrailingArticle(altRaw), true) : null;
+        const tokens = cleanTitle ? cleanTitle.split(/\s+/) : [];
+        const numbers = tokens.filter(function (t) { return /^\d+$/.test(t); });
+        return {
+          lowerStem, regions, fullNorm, fullNormNoConn,
+          cleanTitle, cleanTitleNoConn, altNoPrefix,
+          tokens: new Set(tokens), numbers
+        };
+      }
+      function jaroWinkler(s1, s2) {
+        if (s1 === s2) return 1.0;
+        const l1 = s1.length, l2 = s2.length;
+        if (!l1 || !l2) return 0.0;
+        const maxDist = Math.max(0, Math.floor(Math.max(l1, l2) / 2) - 1);
+        const m1 = new Array(l1).fill(false);
+        const m2 = new Array(l2).fill(false);
+        let matches = 0;
+        for (let i = 0; i < l1; i++) {
+          const start = Math.max(0, i - maxDist);
+          const end = Math.min(i + maxDist + 1, l2);
+          for (let j = start; j < end; j++) {
+            if (!m2[j] && s1[i] === s2[j]) {
+              m1[i] = m2[j] = true;
+              matches++;
+              break;
+            }
+          }
+        }
+        if (!matches) return 0.0;
+        let t = 0, k = 0;
+        for (let i = 0; i < l1; i++) {
+          if (m1[i]) {
+            while (!m2[k]) k++;
+            if (s1[i] !== s2[k]) t++;
+            k++;
+          }
+        }
+        const jaro = (matches / l1 + matches / l2 + (matches - t / 2) / matches) / 3;
+        let prefix = 0;
+        for (let i = 0; i < Math.min(4, l1, l2); i++) {
+          if (s1[i] === s2[i]) prefix++;
+          else break;
+        }
+        return jaro + prefix * 0.1 * (1 - jaro);
+      }
+      function normLev(a, b) {
+        if (a === b) return 1.0;
+        const m = a.length, n = b.length;
+        if (!m && !n) return 1.0;
+        if (!m || !n) return 0.0;
+        let prev = Array.from({ length: n + 1 }, function (_, i) { return i; });
+        for (let i = 1; i <= m; i++) {
+          const cur = [i];
+          for (let j = 1; j <= n; j++) {
+            const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+            cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + cost);
+          }
+          prev = cur;
+        }
+        return 1.0 - prev[n] / Math.max(m, n);
+      }
+      function tokenDice(setA, setB) {
+        if (!setA.size || !setB.size) return 0.0;
+        let shared = 0;
+        setA.forEach(function (t) { if (setB.has(t)) shared++; });
+        return (2 * shared) / (setA.size + setB.size);
+      }
+      function evaluateMatch(gameStem, coverStem) {
+        const g = parseName(gameStem);
+        const c = parseName(coverStem);
+        const regOverlap = g.regions.some(function (r) { return c.regions.includes(r); });
+        const bonus = regOverlap ? 0.03
+          : (c.regions.includes("world") || c.regions.length === 0) ? 0.015
+          : (c.regions.includes("usa") || c.regions.includes("europe")) ? 0.005 : 0.0;
+
+        let best = { score: 0, kind: "Sin coincidencia cercana", detail: "" };
+        function consider(score, kind, detail) {
+          if (score > best.score) best = { score, kind, detail };
+        }
+
+        if (g.lowerStem && g.lowerStem === c.lowerStem) {
+          consider(1.0, "Exacto (Nivel 1)", "Coincidencia exacta ignorando mayúsculas.");
+        }
+        if (g.fullNorm && g.fullNorm === c.fullNorm) {
+          consider(0.98, "Normalizado (Nivel 2)", "Nombre completo equivalente tras normalizar puntuación y acentos.");
+        }
+        if (g.fullNormNoConn && g.fullNormNoConn === c.fullNormNoConn) {
+          consider(0.97, "Normalizado Libretro (Nivel 2)", "Equivalencia entre '&', 'and' y '_' en el nombre completo.");
+        }
+        if (g.cleanTitle && (g.cleanTitle === c.cleanTitle || (g.altNoPrefix && g.altNoPrefix === c.cleanTitle) || (c.altNoPrefix && g.cleanTitle === c.altNoPrefix))) {
+          consider(0.94 + bonus, "Título exacto (Nivel 3)", "Mismo título base tras limpiar etiquetas y romanos (+ afinidad de región).");
+        }
+        if (g.cleanTitleNoConn && g.cleanTitleNoConn === c.cleanTitleNoConn) {
+          consider(0.935 + bonus, "Título exacto sin conectores (Nivel 3)", "Mismo título base ignorando conectores '&'/'and'.");
+        }
+
+        if (g.cleanTitle && c.cleanTitle && best.score < 0.93) {
+          const jw = jaroWinkler(g.cleanTitle, c.cleanTitle);
+          const lv = normLev(g.cleanTitle, c.cleanTitle);
+          const dc = tokenDice(g.tokens, c.tokens);
+          let score = 0.35 * jw + 0.35 * lv + 0.30 * dc;
+          let note = "Jaro-Winkler " + Math.round(jw * 100) + "%, Levenshtein " + Math.round(lv * 100) + "%, Dice " + Math.round(dc * 100) + "%";
+          const sameNums = g.numbers.length === c.numbers.length && g.numbers.every(function (n, idx) { return n === c.numbers[idx]; });
+          if (!sameNums && (g.numbers.length > 0 || c.numbers.length > 0)) {
+            score -= 0.22;
+            note += " · Penalización secuela (-22%) por números [" + (g.numbers.join(",") || "∅") + "] vs [" + (c.numbers.join(",") || "∅") + "]";
+          } else if (score >= 0.65 && regOverlap) {
+            score += 0.02;
+            note += " · Bonus región (+2%)";
+          }
+          score = Math.max(0, Math.min(0.93, score));
+          consider(score, "Similitud difusa (Nivel 4)", note);
+        }
+
+        return { g, c, best };
+      }
+
+      const simGame = document.getElementById("sim-game");
+      const simCover = document.getElementById("sim-cover");
+      const simThresh = document.getElementById("sim-threshold");
+      const simThreshLbl = document.getElementById("sim-threshold-label");
+      const simOut = document.getElementById("sim-output");
+      const presetBtns = Array.from(document.querySelectorAll("#matcher-presets .tab-btn"));
+
+      function escapeHtml(s) {
+        return String(s)
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;");
+      }
+
+      function updateSimulator() {
+        const th = Number(simThresh.value) / 100;
+        simThreshLbl.textContent = simThresh.value + "%";
+        const gameVal = simGame.value.trim();
+        const coverVal = simCover.value.trim();
+        const res = evaluateMatch(gameVal, coverVal);
+        const pct = Math.round(res.best.score * 100);
+        const passed = res.best.score >= th;
+        const barColor = passed ? (pct >= 90 ? "var(--green)" : "var(--amber)") : "var(--red)";
+        const statusPill = passed
+          ? '<span class="pill green">✔ Enlazado automáticamente (' + pct + '% ≥ ' + simThresh.value + '%)</span>'
+          : '<span class="pill red">✖ Por debajo del umbral (' + pct + '% &lt; ' + simThresh.value + '%)</span>';
+
+        simOut.innerHTML =
+          '<div style="display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:8px; margin-top:8px;">' +
+            '<div><strong>' + escapeHtml(res.best.kind) + '</strong> — ' + statusPill + '</div>' +
+            '<div style="font-family:var(--mono); font-size:12.5px;">Destino: <code>media/' + escapeHtml(gameVal || "juego") + '.png</code></div>' +
+          '</div>' +
+          '<div class="score-meter"><div class="score-fill" style="width:' + pct + '%; background:' + barColor + ';"></div></div>' +
+          '<p class="muted" style="font-size:13px; margin-bottom:10px;">' + escapeHtml(res.best.detail || "No hay similitud relevante.") + '</p>' +
+          '<div class="grid-2" style="font-size:12.5px;">' +
+            '<div class="tree-box"><strong>Juego normalizado:</strong><br>' +
+              'Título limpio: <code>' + escapeHtml(res.g.cleanTitle || "—") + '</code><br>' +
+              'Regiones: <code>' + escapeHtml(res.g.regions.join(", ") || "ninguna") + '</code> · Números: <code>' + escapeHtml(res.g.numbers.join(", ") || "ninguno") + '</code></div>' +
+            '<div class="tree-box"><strong>Portada normalizada:</strong><br>' +
+              'Título limpio: <code>' + escapeHtml(res.c.cleanTitle || "—") + '</code><br>' +
+              'Regiones: <code>' + escapeHtml(res.c.regions.join(", ") || "ninguna") + '</code> · Números: <code>' + escapeHtml(res.c.numbers.join(", ") || "ninguno") + '</code></div>' +
+          '</div>';
+      }
+
+      presetBtns.forEach(function (btn) {
+        btn.addEventListener("click", function () {
+          presetBtns.forEach(function (b) { b.classList.remove("active"); });
+          btn.classList.add("active");
+          simGame.value = btn.getAttribute("data-game");
+          simCover.value = btn.getAttribute("data-cover");
+          updateSimulator();
+        });
+      });
+      [simGame, simCover, simThresh].forEach(function (el) {
+        el.addEventListener("input", updateSimulator);
+      });
+      updateSimulator();
+
+      // 6. Connection tabs
+      const connTabBtns = Array.from(document.querySelectorAll('[data-tabgroup="conn"] .tab-btn'));
+      connTabBtns.forEach(function (btn) {
+        btn.addEventListener("click", function () {
+          const targetId = btn.getAttribute("data-tab");
+          connTabBtns.forEach(function (b) { b.classList.remove("active"); });
+          btn.classList.add("active");
+          document.querySelectorAll("#conexion .tab-panel").forEach(function (panel) {
+            panel.classList.toggle("active", panel.id === targetId);
+          });
+        });
+      });
+
+      // 7. Interactive CLI builder
+      let currentCmd = "sync";
+      const cmdBtns = Array.from(document.querySelectorAll("#cli-subcmd-tabs .tab-btn"));
+      const cliMode = document.getElementById("cli-mode");
+      const cliGames = document.getElementById("cli-games");
+      const cliGamesLabel = document.getElementById("cli-games-label");
+      const cliSourcesWrap = document.getElementById("cli-sources-wrap");
+      const cliSources = document.getElementById("cli-sources");
+      const cliImagesWrap = document.getElementById("cli-images-wrap");
+      const cliImages = document.getElementById("cli-images");
+      const cliSftpFields = document.getElementById("cli-sftp-fields");
+      const cliHost = document.getElementById("cli-host");
+      const cliPort = document.getElementById("cli-port");
+      const cliUser = document.getElementById("cli-user");
+      const cliAuth = document.getElementById("cli-auth");
+      const cliKeyWrap = document.getElementById("cli-key-wrap");
+      const cliKey = document.getElementById("cli-key");
+      const cliSyncOpts = document.getElementById("cli-sync-options");
+      const cliThreshold = document.getElementById("cli-threshold");
+      const cliThreshVal = document.getElementById("cli-thresh-val");
+      const cliDry = document.getElementById("cli-dry");
+      const cliOverwrite = document.getElementById("cli-overwrite");
+      const cliKeep = document.getElementById("cli-keep");
+      const cliPerSub = document.getElementById("cli-per-sub");
+      const cliNoRec = document.getElementById("cli-no-rec");
+      const cliAllowCross = document.getElementById("cli-allow-cross");
+      const cliConvertChdWrap = document.getElementById("cli-convert-chd-wrap");
+      const cliConvertChd = document.getElementById("cli-convert-chd");
+      const cliOut = document.getElementById("cli-output");
+      const copyCliBtn = document.getElementById("copy-cli-btn");
+
+      function quotePs(val) {
+        return '"' + val.replace(/"/g, '\\"') + '"';
+      }
+
+      function buildCliCommand() {
+        const isList = currentCmd === "list-remote";
+        const isUpload = currentCmd === "upload";
+        const isSftp = isList || cliMode.value === "sftp";
+        cliMode.disabled = isList;
+        cliImagesWrap.style.display = isList ? "none" : "flex";
+        cliSourcesWrap.style.display = isUpload ? "flex" : "none";
+        cliConvertChdWrap.style.display = isUpload ? "flex" : "none";
+        cliSyncOpts.style.display = isList ? "none" : "block";
+        cliSftpFields.style.display = isSftp ? "block" : "none";
+        cliKeyWrap.style.display = isSftp && cliAuth.value === "key" ? "flex" : "none";
+        cliGamesLabel.textContent = isList
+          ? "Ruta remota a listar (--path)"
+          : isUpload
+            ? (isSftp ? "Carpeta raíz games/ remota (--games-root)" : "Carpeta raíz games/ local (--games-root)")
+            : (isSftp ? "Ruta remota de juegos (--games)" : "Carpeta de juegos (--games)");
+
+        const parts = [];
+        if (isSftp && cliAuth.value === "env") {
+          parts.push('$env:MISTER_SSH_PASSWORD = "tu_password"');
+        }
+
+        const cmdParts = [".\\target\\release\\mister-cover-scraper.exe", currentCmd];
+        if (isSftp) {
+          cmdParts.push("--sftp", quotePs(cliHost.value.trim() || "192.168.1.50"));
+          if (cliPort.value && cliPort.value !== "22") cmdParts.push("--port", cliPort.value);
+          if (cliUser.value.trim() && cliUser.value.trim() !== "root") cmdParts.push("--user", quotePs(cliUser.value.trim()));
+          if (cliAuth.value === "key" && cliKey.value.trim()) {
+            cmdParts.push("--key", quotePs(cliKey.value.trim()));
+          }
+        }
+
+        if (isList) {
+          cmdParts.push("--path", quotePs(cliGames.value.trim() || "/media/fat/games"));
+        } else if (isUpload) {
+          cmdParts.push("--games-root", quotePs(cliGames.value.trim() || "/media/fat/games"));
+          const srcs = cliSources.value.split(",").map(function (s) { return s.trim(); }).filter(Boolean);
+          if (srcs.length > 0) {
+            cmdParts.push("--sources");
+            srcs.forEach(function (s) { cmdParts.push(quotePs(s)); });
+          }
+          if (cliImages.value.trim()) cmdParts.push("--images", quotePs(cliImages.value.trim()));
+          const th = Number(cliThreshold.value).toFixed(2);
+          cliThreshVal.textContent = th;
+          if (th !== "0.78") cmdParts.push("--threshold", th);
+          if (cliDry.checked) cmdParts.push("--dry-run");
+          if (cliOverwrite.checked) { cmdParts.push("--overwrite-games"); cmdParts.push("--overwrite-covers"); }
+          if (cliKeep.checked) cmdParts.push("--keep-format");
+          if (cliPerSub.checked) cmdParts.push("--per-subfolder-media");
+          if (cliNoRec.checked) cmdParts.push("--no-recursive-images");
+          if (cliAllowCross.checked) cmdParts.push("--allow-cross-system");
+          if (cliConvertChd.checked) cmdParts.push("--convert-to-chd");
+        } else {
+          cmdParts.push("--games", quotePs(cliGames.value.trim() || "D:\\MiSTer\\games\\PSX"));
+          cmdParts.push("--images", quotePs(cliImages.value.trim() || "D:\\Covers\\sony playstation"));
+          const th = Number(cliThreshold.value).toFixed(2);
+          cliThreshVal.textContent = th;
+          if (th !== "0.78") cmdParts.push("--threshold", th);
+          if (cliDry.checked) cmdParts.push("--dry-run");
+          if (cliOverwrite.checked) cmdParts.push("--overwrite");
+          if (cliKeep.checked) cmdParts.push("--keep-format");
+          if (cliPerSub.checked) cmdParts.push("--per-subfolder-media");
+          if (cliNoRec.checked) cmdParts.push("--no-recursive-images");
+          if (cliAllowCross.checked) cmdParts.push("--allow-cross-system");
+        }
+
+        parts.push(cmdParts.join(" "));
+        cliOut.textContent = parts.join("\n");
+      }
+
+      cmdBtns.forEach(function (btn) {
+        btn.addEventListener("click", function () {
+          cmdBtns.forEach(function (b) { b.classList.remove("active"); });
+          btn.classList.add("active");
+          currentCmd = btn.getAttribute("data-cmd");
+          if ((currentCmd === "list-remote" || currentCmd === "upload") && cliGames.value === "/media/fat/games/PSX") {
+            cliGames.value = "/media/fat/games";
+          } else if (currentCmd === "sync" && cliGames.value === "/media/fat/games") {
+            cliGames.value = "/media/fat/games/PSX";
+          }
+          buildCliCommand();
+        });
+      });
+      cliMode.addEventListener("change", function () {
+        if (cliMode.value === "local" && cliGames.value.startsWith("/media/")) {
+          cliGames.value = currentCmd === "upload" ? "D:\\MiSTer\\games" : "D:\\MiSTer\\games\\PSX";
+        } else if (cliMode.value === "sftp" && !cliGames.value.startsWith("/")) {
+          cliGames.value = currentCmd === "upload" ? "/media/fat/games" : "/media/fat/games/PSX";
+        }
+        buildCliCommand();
+      });
+      [cliGames, cliSources, cliImages, cliHost, cliPort, cliUser, cliAuth, cliKey, cliThreshold, cliDry, cliOverwrite, cliKeep, cliPerSub, cliNoRec, cliAllowCross, cliConvertChd]
+        .forEach(function (el) {
+          el.addEventListener("input", buildCliCommand);
+          el.addEventListener("change", buildCliCommand);
+        });
+      buildCliCommand();
+
+      copyCliBtn.addEventListener("click", function () {
+        const text = cliOut.textContent;
+        function done() {
+          copyCliBtn.textContent = "¡Copiado!";
+          setTimeout(function () { copyCliBtn.textContent = "Copiar comando"; }, 1600);
+        }
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(text).then(done).catch(fallbackCopy);
+        } else {
+          fallbackCopy();
+        }
+        function fallbackCopy() {
+          const ta = document.createElement("textarea");
+          ta.value = text;
+          ta.style.position = "fixed";
+          ta.style.opacity = "0";
+          document.body.appendChild(ta);
+          ta.select();
+          try { document.execCommand("copy"); } catch (_) {}
+          document.body.removeChild(ta);
+          done();
+        }
+      });
+    })();
+  </script>
+</body>
+</html>

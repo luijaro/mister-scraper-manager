@@ -1,0 +1,27 @@
+[package]
+name = "mister-cover-scraper"
+version = "0.1.0"
+edition = "2024"
+description = "Scraper y enlazador local/SFTP de covers para MiSTer FPGA ConsoleMode"
+
+[dependencies]
+anyhow = "1.0"
+chd-rs = { version = "0.1", default-features = false }
+clap = { version = "4.6", features = ["derive", "env"] }
+directories = "6.0"
+eframe = "0.37"
+egui = "0.37"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "bmp", "gif"] }
+rfd = "0.18"
+russh = { version = "0.65", default-features = false, features = ["ring", "rsa", "flate2"] }
+russh-sftp = "3.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+sevenz-rust2 = { version = "0.25", default-features = false, features = ["aes256", "compress", "deflate", "ppmd", "util", "lz4", "brotli"] }
+strsim = "0.11"
+tempfile = "3.14"
+tokio = { version = "1.54", features = ["rt-multi-thread", "macros", "fs", "io-util", "net", "time", "sync"] }
+unicode-normalization = "0.1"
+unrar-ng = "0.7"
+walkdir = "2.5"
+zip = { version = "9.8", default-features = false, features = ["deflate-flate2-zlib-rs", "deflate64", "lzma", "ppmd", "aes-crypto"] }
