@@ -130,6 +130,24 @@ pub fn is_ignored_non_game_file(file_name: &str, ext: &str) -> bool {
     false
 }
 
+/// Returns `true` if `stem` matches a cosmetic MiSTer boot/demo ROM
+/// (`mister-boot*` / `mister-demo*` from uberyoji Boot ROMs).
+/// Real BIOS files (`boot.rom`, `boot0.rom`–`boot3.rom`) are never matched.
+pub fn is_mister_boot_or_demo_stem(stem: &str) -> bool {
+    let lower = stem.trim().to_ascii_lowercase();
+    for prefix in ["mister-boot", "mister-demo", "mister_boot", "mister_demo"] {
+        if lower == prefix {
+            return true;
+        }
+        if let Some(rest) = lower.strip_prefix(prefix)
+            && rest.starts_with(['-', '_', ' ', '.', '('])
+        {
+            return true;
+        }
+    }
+    false
+}
+
 /// Returns `true` if `ext` (lowercase, without dot) is a known MiSTer FPGA game/ROM extension.
 pub fn is_supported_game_extension(ext: &str) -> bool {
     SUPPORTED_GAME_EXTENSIONS.contains(&ext)
@@ -295,6 +313,37 @@ mod tests {
             assert!(
                 !SUPPORTED_GAME_EXTENSIONS.contains(ext),
                 "Extension .{ext} must not appear in both IGNORED_EXTENSIONS and SUPPORTED_GAME_EXTENSIONS"
+            );
+        }
+    }
+
+    #[test]
+    fn detects_mister_boot_and_demo_without_matching_bios_or_games() {
+        for name in [
+            "mister-boot",
+            "MiSTer-Boot",
+            "mister-demo",
+            "mister-demo (PSX)",
+            "mister-boot-snes",
+            "mister_boot",
+            "mister_demo.1",
+        ] {
+            assert!(is_mister_boot_or_demo_stem(name), "expected true for {name}");
+        }
+
+        for name in [
+            "boot",
+            "boot0",
+            "boot1",
+            "boot2",
+            "boot3",
+            "Mister Mosquito (USA)",
+            "Demo Disc (USA)",
+            "mister-bootloader",
+        ] {
+            assert!(
+                !is_mister_boot_or_demo_stem(name),
+                "expected false for {name}"
             );
         }
     }

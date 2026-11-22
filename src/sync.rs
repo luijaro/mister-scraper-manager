@@ -8,7 +8,7 @@ use crate::config::{MediaPlacement, SyncOptions};
 use crate::imaging;
 use crate::matcher::CoverIndex;
 use crate::models::{
-    AnalysisResult, CoverImage, MatchItem, MatchKind, MatchStatus, SyncSummary,
+    AnalysisResult, CoverImage, GameEntry, MatchItem, MatchKind, MatchStatus, SyncSummary,
 };
 use crate::scanner;
 use crate::storage::{StorageClient, join_storage_path};
@@ -63,6 +63,10 @@ where
             on_progress(format!("Escaneando: {dir}"));
         })
         .await?;
+
+    let (boot_demo_files, games): (Vec<GameEntry>, Vec<GameEntry>) = games
+        .into_iter()
+        .partition(|game| scanner::is_mister_boot_or_demo_stem(&game.stem));
 
     let is_sftp = storage.is_sftp();
     let mut existing_cache: HashMap<String, HashMap<String, String>> = HashMap::new();
@@ -124,6 +128,7 @@ where
         is_sftp,
         covers,
         items,
+        boot_demo_files,
         system_mismatch_warning,
     })
 }
@@ -634,5 +639,38 @@ mod tests {
                 .join("Mario Kart - Super Circuit (USA).png")
                 .is_file()
         );
+    }
+
+    #[tokio::test]
+    async fn analyze_separates_mister_boot_and_demo_from_games_and_keeps_bios_ignored() {
+        let root = tempdir().unwrap();
+        let psx_dir = root.path().join("PSX");
+        let covers_dir = root.path().join("Covers");
+        fs::create_dir_all(&psx_dir).unwrap();
+        fs::create_dir_all(&covers_dir).unwrap();
+
+        fs::write(psx_dir.join("Crash Bandicoot (USA).chd"), b"rom").unwrap();
+        fs::write(psx_dir.join("mister-demo.chd"), b"demo").unwrap();
+        fs::write(psx_dir.join("mister-boot.cue"), b"FILE").unwrap();
+        fs::write(psx_dir.join("boot.rom"), b"bios").unwrap();
+        write_test_png(&covers_dir.join("Crash Bandicoot (USA).png"));
+
+        let storage = StorageClient::Local;
+        let cancel = AtomicBool::new(false);
+        let opts = SyncOptions::default();
+        let psx_str = psx_dir.to_string_lossy().to_string();
+
+        let analysis = analyze(&storage, &psx_str, &covers_dir, &opts, &cancel, |_| {})
+            .await
+            .unwrap();
+
+        assert_eq!(analysis.items.len(), 1);
+        assert_eq!(analysis.items[0].game.stem, "Crash Bandicoot (USA)");
+        let boot_names: Vec<&str> = analysis
+            .boot_demo_files
+            .iter()
+            .map(|g| g.file_name.as_str())
+            .collect();
+        assert_eq!(boot_names, vec!["mister-boot.cue", "mister-demo.chd"]);
     }
 }

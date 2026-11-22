@@ -204,6 +204,49 @@ pub struct DuplicatesArgs {
     pub yes: bool,
 }
 
+/// Arguments for the `clean-boot` CLI subcommand.
+#[derive(Debug, Args)]
+pub struct CleanBootArgs {
+    /// Carpeta raíz de juegos a escanear (local o remota si se usa --sftp)
+    #[arg(long)]
+    pub games: String,
+
+    /// Host o IP de la MiSTer para escanear por SFTP/SSH
+    #[arg(long)]
+    pub sftp: Option<String>,
+
+    #[arg(long, default_value_t = 22)]
+    pub port: u16,
+
+    #[arg(long, default_value = "root")]
+    pub user: String,
+
+    #[arg(long, env = "MISTER_SSH_PASSWORD")]
+    pub password: Option<String>,
+
+    #[arg(long)]
+    pub key: Option<PathBuf>,
+
+    #[arg(long, env = "MISTER_SSH_PASSPHRASE")]
+    pub passphrase: Option<String>,
+
+    /// Solo listar archivos mister-boot / mister-demo detectados sin preguntar ni eliminar
+    #[arg(long)]
+    pub list_only: bool,
+
+    /// Simula la eliminación sin borrar ni mover archivos
+    #[arg(long)]
+    pub dry_run: bool,
+
+    /// Confirma la eliminación sin preguntar
+    #[arg(long)]
+    pub yes: bool,
+
+    /// Imprime los archivos detectados en JSON y sale
+    #[arg(long)]
+    pub json: bool,
+}
+
 /// Arguments for the `upload` CLI subcommand.
 #[derive(Debug, Args)]
 pub struct UploadArgs {
@@ -470,12 +513,20 @@ pub async fn run_duplicates(args: DuplicatesArgs) -> Result<()> {
     };
 
     let groups = duplicates::find_duplicates(&games);
+    let boot_demos = duplicates::find_boot_demo_files(&games);
     println!("\nJuegos detectados: {} · grupos de duplicados: {}", games.len(), groups.len());
 
     if args.json && args.delete.is_empty() && args.keep.is_empty() {
         println!("{}", serde_json::to_string_pretty(&groups)?);
         storage.close().await;
         return Ok(());
+    }
+
+    if !boot_demos.is_empty() {
+        println!(
+            "Info: Se detectaron {} archivo(s) mister-boot/mister-demo (excluidos de duplicados). Usa 'clean-boot' para revisarlos o eliminarlos.",
+            boot_demos.len()
+        );
     }
 
     if groups.is_empty() {
@@ -585,6 +636,136 @@ pub async fn run_duplicates(args: DuplicatesArgs) -> Result<()> {
     Ok(())
 }
 
+/// Runs the `clean-boot` CLI command: find cosmetic `mister-boot`/`mister-demo` files and
+/// delete them after confirmation.
+pub async fn run_clean_boot(args: CleanBootArgs) -> Result<()> {
+    let is_sftp = args.sftp.is_some();
+    let storage = if let Some(host) = args.sftp.clone() {
+        println!("Conectando a {host}:{} por SFTP...", args.port);
+        connect_sftp_client(
+            host,
+            args.port,
+            args.user.clone(),
+            args.password.clone(),
+            args.key.clone(),
+            args.passphrase.clone(),
+            args.games.clone(),
+        )
+        .await?
+    } else {
+        StorageClient::Local
+    };
+
+    let cancel = AtomicBool::new(false);
+    let games = storage
+        .scan_games(&args.games, &cancel, |dir| println!("Escaneando: {dir}"))
+        .await;
+    let games = match games {
+        Ok(games) => games,
+        Err(err) => {
+            storage.close().await;
+            return Err(err);
+        }
+    };
+
+    let found = duplicates::find_boot_demo_files(&games);
+
+    if args.json {
+        println!("{}", serde_json::to_string_pretty(&found)?);
+        storage.close().await;
+        return Ok(());
+    }
+
+    if found.is_empty() {
+        println!("No se encontraron archivos mister-boot ni mister-demo.");
+        storage.close().await;
+        return Ok(());
+    }
+
+    println!(
+        "\nArchivos mister-boot / mister-demo detectados ({}):",
+        found.len()
+    );
+    for (idx, item) in found.iter().enumerate() {
+        let sys_tag = item
+            .system
+            .as_deref()
+            .map(|s| format!(" [{s}]"))
+            .unwrap_or_default();
+        println!("  [{}] {}{sys_tag} [{}]", idx + 1, item.path, item.extension);
+    }
+    println!(
+        "Nota: Las BIOS reales del sistema (boot.rom, boot0.rom–boot3.rom, scph*.bin) nunca se incluyen."
+    );
+
+    if args.list_only {
+        storage.close().await;
+        return Ok(());
+    }
+
+    println!(
+        "{}",
+        if args.dry_run {
+            "\nDRY-RUN: no se eliminará nada."
+        } else if is_sftp {
+            "\nSFTP: los archivos se eliminarán permanentemente."
+        } else {
+            "\nLocal: los archivos se moverán a una carpeta de papelera."
+        }
+    );
+
+    if !args.dry_run && !args.yes {
+        print!(
+            "¿Eliminar estos {} archivo(s) mister-boot/mister-demo? [s/N] ",
+            found.len()
+        );
+        let _ = io::stdout().flush();
+        let mut answer = String::new();
+        let _ = io::stdin().read_line(&mut answer);
+        let answer = answer.trim();
+        let accepted = answer.eq_ignore_ascii_case("s")
+            || answer.eq_ignore_ascii_case("si")
+            || answer.eq_ignore_ascii_case("sí")
+            || answer.eq_ignore_ascii_case("y")
+            || answer.eq_ignore_ascii_case("yes");
+        if !accepted {
+            println!("Operación cancelada.");
+            storage.close().await;
+            return Ok(());
+        }
+    }
+
+    let paths: Vec<String> = found.into_iter().map(|item| item.path).collect();
+    let summary = duplicates::delete_paths(
+        &storage,
+        &args.games,
+        is_sftp,
+        &paths,
+        args.dry_run,
+        |message| println!("{message}"),
+    )
+    .await;
+
+    storage.close().await;
+    let summary = summary?;
+
+    println!(
+        "\nEliminados: {} · pistas de disco: {} · fallidos: {}",
+        summary.deleted, summary.tracks_deleted, summary.failed
+    );
+    if let Some(ref trash) = summary.trash_dir {
+        println!("Papelera: {trash}");
+    }
+    for (path, err) in &summary.errors {
+        println!("  [ERROR] {path}: {err}");
+    }
+    println!(
+        "\nConsejo: Desactiva 'uberyoji Boot ROMS' en update_all (Extra Content) para que no reaparezcan y ejecuta 'Rebuild Game Database' en ConsoleMode."
+    );
+
+    Ok(())
+}
+
 /// Runs the `sync` CLI command end-to-end.
 pub async fn run_sync(args: SyncArgs) -> Result<()> {
     let storage = if let Some(host) = args.sftp {
@@ -654,6 +835,12 @@ pub async fn run_sync(args: SyncArgs) -> Result<()> {
     println!("Ya existentes     : {already_exists}");
     println!("Listos para copiar: {ready}");
     println!("Sin coincidencia  : {unmatched}");
+    if !analysis.boot_demo_files.is_empty() {
+        println!(
+            "Boot/demo omitidos: {} (usa 'clean-boot' para revisarlos o eliminarlos)",
+            analysis.boot_demo_files.len()
+        );
+    }
     if let Some(ref warn) = analysis.system_mismatch_warning {
         println!("\n[ADVERTENCIA] {warn}");
     }

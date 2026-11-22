@@ -13,7 +13,7 @@ use serde::Serialize;
 
 use crate::matcher;
 use crate::models::GameEntry;
-use crate::scanner::split_stem_ext;
+use crate::scanner::{is_mister_boot_or_demo_stem, split_stem_ext};
 use crate::storage::{StorageClient, join_storage_path, posix_normalize, posix_parent};
 
 /// A single game inside a duplicate group.
@@ -50,6 +50,9 @@ pub struct DeleteSummary {
 pub fn find_duplicates(games: &[GameEntry]) -> Vec<DuplicateGroup> {
     let mut buckets: HashMap<String, Vec<&GameEntry>> = HashMap::new();
     for game in games {
+        if is_mister_boot_or_demo_stem(&game.stem) {
+            continue;
+        }
         let key = matcher::canonical_game_key(&game.stem);
         if !key.is_empty() {
             buckets.entry(key).or_default().push(game);
@@ -75,6 +78,17 @@ pub fn find_duplicates(games: &[GameEntry]) -> Vec<DuplicateGroup> {
 
     groups.sort_by(|a, b| a.key.cmp(&b.key));
     groups
+}
+
+/// Finds cosmetic MiSTer boot/demo ROMs (`mister-boot*`, `mister-demo*`)
+/// inside a previously scanned game list, sorted by path.
+pub fn find_boot_demo_files(games: &[GameEntry]) -> Vec<DuplicateGame> {
+    let mut found: Vec<&GameEntry> = games
+        .iter()
+        .filter(|game| is_mister_boot_or_demo_stem(&game.stem))
+        .collect();
+    found.sort_by(|a, b| a.full_path.cmp(&b.full_path));
+    found.into_iter().map(to_duplicate_game).collect()
 }
 
 /// Returns the paths of every game in `group` except the one at `keep_idx`.
@@ -422,5 +436,67 @@ mod tests {
             relative_inside("/media/fat/games", "/media/fat/games/PSX/A.chd", true),
             Some("PSX/A.chd".to_string())
         );
+    }
+
+    #[test]
+    fn finds_mister_boot_and_demo_and_excludes_them_from_duplicate_groups() {
+        let games = vec![
+            game("/games/NES/mister-boot.nes", "mister-boot", "nes"),
+            game("/games/SNES/mister-boot.sfc", "mister-boot", "sfc"),
+            game("/games/PSX/mister-demo.chd", "mister-demo", "chd"),
+            game("/games/PSX/boot.rom", "boot", "rom"),
+            game("/games/PSX/Crash (USA).chd", "Crash (USA)", "chd"),
+        ];
+        let found = find_boot_demo_files(&games);
+        let paths: Vec<&str> = found.iter().map(|g| g.path.as_str()).collect();
+        assert_eq!(
+            paths,
+            vec![
+                "/games/NES/mister-boot.nes",
+                "/games/PSX/mister-demo.chd",
+                "/games/SNES/mister-boot.sfc",
+            ]
+        );
+        assert!(find_duplicates(&games).is_empty());
+    }
+
+    #[tokio::test]
+    async fn deletes_boot_demo_to_local_trash_and_cleans_disc_tracks() {
+        let root = tempfile::tempdir().unwrap();
+        let psx_dir = root.path().join("PSX");
+        std::fs::create_dir_all(&psx_dir).unwrap();
+
+        let demo_chd = psx_dir.join("mister-demo.chd");
+        let boot_cue = psx_dir.join("mister-boot.cue");
+        let boot_bin = psx_dir.join("mister-boot.bin");
+        let real_bios = psx_dir.join("boot.rom");
+
+        std::fs::write(&demo_chd, b"demo").unwrap();
+        std::fs::write(&boot_cue, b"FILE").unwrap();
+        std::fs::write(&boot_bin, b"track").unwrap();
+        std::fs::write(&real_bios, b"bios").unwrap();
+
+        let root_str = root.path().to_string_lossy().to_string();
+        let paths = vec![
+            demo_chd.to_string_lossy().to_string(),
+            boot_cue.to_string_lossy().to_string(),
+        ];
+
+        let summary = delete_paths(&StorageClient::Local, &root_str, false, &paths, false, |_| {})
+            .await
+            .unwrap();
+
+        assert_eq!(summary.deleted, 2);
+        assert_eq!(summary.tracks_deleted, 1);
+        assert_eq!(summary.failed, 0);
+        assert!(!demo_chd.exists());
+        assert!(!boot_cue.exists());
+        assert!(!boot_bin.exists());
+        assert!(real_bios.is_file());
+
+        let trash_dir = PathBuf::from(summary.trash_dir.unwrap());
+        assert!(trash_dir.join("PSX").join("mister-demo.chd").is_file());
+        assert!(trash_dir.join("PSX").join("mister-boot.cue").is_file());
+        assert!(trash_dir.join("PSX").join("mister-boot.bin").is_file());
     }
 }

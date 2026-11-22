@@ -101,6 +101,7 @@ pub struct AnalysisResult {
     pub is_sftp: bool,
     pub covers: Vec<CoverImage>,
     pub items: Vec<MatchItem>,
+    pub boot_demo_files: Vec<GameEntry>,
     pub system_mismatch_warning: Option<String>,
 }
 

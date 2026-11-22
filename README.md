@@ -19,7 +19,7 @@ Aplicación de escritorio y consola (CLI) en **Rust** para enlazar automáticame
   - **Local / Tarjeta SD / SMB de Windows**: por ejemplo `D:\games\PSX` o `\\mister\fat\games\PSX`.
   - **SFTP / SSH (puerto 22)**: accede directamente al almacenamiento de tu MiSTer FPGA tanto en red local (`mister.local` o IP LAN) como a través de internet (Tailscale, WireGuard o SSH expuesto), con autenticación por contraseña (por defecto `root` / `1` en MiSTer) o clave privada SSH y explorador visual de carpetas remotas.
   - **Descubrimiento automático de la MiSTer**: botón **🔎 Buscar MiSTer** en la GUI y subcomando `discover` en CLI que escanean la red local, detectan hosts con SSH/SFTP y verifican el acceso a `/media/fat`.
-  - **Detección y eliminación de duplicados**: pestaña **🧹 Duplicados** en la GUI y subcomando `duplicates` en CLI. Agrupa juegos por nombre normalizado (región, tag de disco, acentos, artículos y números romanos se ignoran), recomienda qué copia conservar y elimina el resto. En local mueve los archivos a una papelera recuperable; por SFTP los elimina tras confirmación. Al borrar una hoja `.cue`/`.ccd`/`.gdi` también elimina sus pistas `.bin`/`.img` huérfanas.
+  - **Detección y eliminación de duplicados y boot/demo**: pestaña **🧹 Duplicados / Limpieza** en la GUI y subcomandos `duplicates` / `clean-boot` en CLI. Agrupa juegos por nombre normalizado (región, tag de disco, acentos, artículos y números romanos se ignoran), recomienda qué copia conservar y elimina el resto. También detecta archivos cosméticos `mister-boot` / `mister-demo` (uberyoji Boot ROMs) —preguntando tras analizar o desde la pestaña de limpieza— sin tocar nunca las BIOS reales (`boot.rom`–`boot3.rom`). En local mueve los archivos a una papelera recuperable; por SFTP los elimina tras confirmación. Al borrar una hoja `.cue`/`.ccd`/`.gdi` también elimina sus pistas `.bin`/`.img` huérfanas.
   - **AppImage para Linux**: además del binario y del `.exe` de Windows, las releases publican un AppImage portable.
 - **Interfaz gráfica (GUI) y modo consola (CLI)**:
   - Vista previa de portadas, filtro de dudosos/faltantes, ajuste en vivo del umbral de similitud, top 5 de sugerencias y buscador para asignación manual.
@@ -125,7 +125,7 @@ El escáner comprueba el puerto SSH (22 por defecto), lee el banner y, si la ver
 
 #### Detectar y eliminar juegos duplicados (`duplicates`)
 
-En la **GUI**, abre la pestaña **🧹 Duplicados**, elige la carpeta de juegos (o la ruta SFTP), pulsa **Buscar duplicados**, selecciona con el círculo qué copia conservar en cada grupo y pulsa **Eliminar duplicados** (se pedirá confirmación).
+En la **GUI**, abre la pestaña **🧹 Duplicados / Limpieza**, elige la carpeta de juegos (o la ruta SFTP), pulsa **Buscar duplicados y boot/demo**, selecciona con el círculo qué copia conservar en cada grupo y pulsa **Eliminar duplicados** (se pedirá confirmación).
 
 En **CLI**:
 
@@ -148,6 +148,28 @@ cargo run --release -- duplicates --games "$HOME/MiSTer/games" --json
 Opciones: `--games` (raíz), `--sftp`/`--port`/`--user`/`--password`/`--key`, `--keep <RUTA>...`, `--delete <RUTA>...`, `--dry-run`, `--yes`, `--json`.
 
 > En local los duplicados se mueven a `<raíz>/.duplicates_trash/<timestamp>/` para poder recuperarlos. En SFTP no hay papelera: la eliminación es permanente y por eso se pide confirmación (o `--yes`).
+
+#### Limpiar archivos `mister-boot` y `mister-demo` (`clean-boot`)
+
+En la **GUI**, al escanear portadas o usar la pestaña **🧹 Duplicados / Limpieza**, si aparecen archivos cosméticos `mister-boot` / `mister-demo` (de *uberyoji Boot ROMs*) se abre un diálogo preguntando cuáles deseas eliminar (las BIOS reales como `boot.rom`–`boot3.rom` nunca se muestran ni se tocan).
+
+En **CLI**:
+
+```bash
+# 1) Listar archivos mister-boot / mister-demo sin modificar nada
+cargo run --release -- clean-boot --games "/run/media/$USER/MiSTer/games" --list-only
+
+# 2) Simular limpieza en local
+cargo run --release -- clean-boot --games "/run/media/$USER/MiSTer/games" --dry-run
+
+# 3) Preguntar y eliminar por SFTP (o añadir --yes para confirmar directo)
+cargo run --release -- clean-boot --sftp 192.168.1.50 --games /media/fat/games
+
+# 4) Ver lista en JSON
+cargo run --release -- clean-boot --games "$HOME/MiSTer/games" --json
+```
+
+Opciones: `--games`, `--sftp`/`--port`/`--user`/`--password`/`--key`, `--list-only`, `--dry-run`, `--yes`, `--json`.
 
 #### Carpeta local, recurso compartido SMB o montaje Linux
 

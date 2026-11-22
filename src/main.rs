@@ -42,6 +42,8 @@ enum Commands {
     Discover(cli::DiscoverArgs),
     /// Detecta juegos con el mismo nombre y elimina los duplicados elegidos
     Duplicates(cli::DuplicatesArgs),
+    /// Detecta y elimina archivos mister-boot / mister-demo (con confirmación)
+    CleanBoot(cli::CleanBootArgs),
 }
 
 fn main() -> Result<()> {
@@ -77,6 +79,12 @@ fn main() -> Result<()> {
                 .enable_all()
                 .build()?;
             rt.block_on(cli::run_duplicates(args))
+        }
+        Some(Commands::CleanBoot(args)) => {
+            let rt = tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()?;
+            rt.block_on(cli::run_clean_boot(args))
         }
     }
 }

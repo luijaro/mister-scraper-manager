@@ -10,7 +10,7 @@ use crate::archives;
 use crate::chd;
 use crate::config::{AppConfig, MediaPlacement, SftpAuthMode, StorageMode};
 use crate::discover::{self, DiscoverOptions, DiscoveredMister};
-use crate::duplicates::{self, DeleteSummary, DuplicateGroup};
+use crate::duplicates::{self, DeleteSummary, DuplicateGame, DuplicateGroup};
 use crate::imaging;
 use crate::models::{AnalysisResult, CoverImage, MatchKind, MatchStatus, SyncSummary};
 use crate::scanner;
@@ -40,6 +40,7 @@ enum BusyTask {
     Uploading,
     ScanningDuplicates,
     DeletingDuplicates,
+    DeletingBootDemos,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -72,9 +73,10 @@ enum WorkerMsg {
     },
     DiscoveryFinished(std::result::Result<Vec<DiscoveredMister>, String>),
     DuplicatesFound {
-        result: std::result::Result<(Vec<DuplicateGroup>, String, bool), String>,
+        result: std::result::Result<(Vec<DuplicateGroup>, Vec<DuplicateGame>, String, bool), String>,
     },
     DuplicatesDeleted(std::result::Result<DeleteSummary, String>),
+    BootDemosDeleted(std::result::Result<DeleteSummary, String>),
     RemoteDirsLoaded {
         path: String,
         result: std::result::Result<Vec<String>, String>,
@@ -186,6 +188,15 @@ struct GuiApp {
     duplicate_keep: HashMap<usize, usize>,
     duplicate_pending_paths: Vec<String>,
     duplicate_confirm_open: bool,
+
+    // Cosmetic mister-boot / mister-demo files state
+    boot_demo_files: Vec<DuplicateGame>,
+    boot_demo_selected: HashSet<String>,
+    boot_demo_root: String,
+    boot_demo_is_sftp: bool,
+    boot_demo_pending_paths: Vec<String>,
+    boot_demo_confirm_open: bool,
+    boot_demo_prompt_from_scraper: bool,
 }
 
 impl GuiApp {
@@ -249,6 +260,13 @@ impl GuiApp {
             duplicate_keep: HashMap::new(),
             duplicate_pending_paths: Vec::new(),
             duplicate_confirm_open: false,
+            boot_demo_files: Vec::new(),
+            boot_demo_selected: HashSet::new(),
+            boot_demo_root: String::new(),
+            boot_demo_is_sftp: false,
+            boot_demo_pending_paths: Vec::new(),
+            boot_demo_confirm_open: false,
+            boot_demo_prompt_from_scraper: false,
         }
     }
 
@@ -371,8 +389,8 @@ impl GuiApp {
                     self.busy = BusyTask::None;
                     self.progress_fraction = None;
                     match result {
-                        Ok((groups, root, is_sftp)) => {
-                            self.duplicate_root = root;
+                        Ok((groups, boot_demos, root, is_sftp)) => {
+                            self.duplicate_root = root.clone();
                             self.duplicate_is_sftp = is_sftp;
                             self.duplicate_keep.clear();
                             for (idx, group) in groups.iter().enumerate() {
@@ -383,19 +401,39 @@ impl GuiApp {
                                 .map(|group| group.games.len().saturating_sub(1))
                                 .sum();
                             self.duplicate_groups = groups;
-                            self.status_text = if self.duplicate_groups.is_empty() {
-                                "No se encontraron juegos duplicados.".to_string()
-                            } else {
-                                format!(
+
+                            self.boot_demo_root = root;
+                            self.boot_demo_is_sftp = is_sftp;
+                            self.boot_demo_selected.clear();
+                            for item in &boot_demos {
+                                self.boot_demo_selected.insert(item.path.clone());
+                            }
+                            let boot_count = boot_demos.len();
+                            self.boot_demo_files = boot_demos;
+
+                            self.status_text = match (self.duplicate_groups.is_empty(), boot_count) {
+                                (true, 0) => {
+                                    "No se encontraron juegos duplicados ni archivos mister-boot/mister-demo.".to_string()
+                                }
+                                (true, n) => {
+                                    format!("Sin duplicados · {n} archivo(s) mister-boot/mister-demo detectado(s).")
+                                }
+                                (false, 0) => format!(
                                     "{} grupo(s) de duplicados · {} copia(s) marcadas para eliminar.",
                                     self.duplicate_groups.len(),
                                     removable
-                                )
+                                ),
+                                (false, n) => format!(
+                                    "{} grupo(s) de duplicados ({removable} copia(s)) · {n} archivo(s) mister-boot/mister-demo.",
+                                    self.duplicate_groups.len()
+                                ),
                             };
                             self.status_is_error = false;
                         }
                         Err(err) => {
                             self.duplicate_groups.clear();
+                            self.boot_demo_files.clear();
+                            self.boot_demo_selected.clear();
                             self.status_text = format!("Error buscando duplicados: {err}");
                             self.status_is_error = true;
                         }
@@ -441,6 +479,54 @@ impl GuiApp {
                     }
                     self.duplicate_pending_paths.clear();
                 }
+                WorkerMsg::BootDemosDeleted(res) => {
+                    self.busy = BusyTask::None;
+                    self.progress_fraction = None;
+                    match res {
+                        Ok(summary) => {
+                            let dry = self.config.options.dry_run;
+                            let verb = if dry { "Se eliminarían" } else { "Eliminados" };
+                            let trash_note = summary
+                                .trash_dir
+                                .as_ref()
+                                .map(|dir| format!("Papelera: {dir}"))
+                                .unwrap_or_default();
+                            self.status_text = format!(
+                                "{verb} {} archivo(s) mister-boot/mister-demo y {} pista(s), {} fallidos. {trash_note}",
+                                summary.deleted, summary.tracks_deleted, summary.failed
+                            );
+                            self.status_is_error = summary.failed > 0;
+
+                            if !dry {
+                                let failed_paths: HashSet<&str> = summary
+                                    .errors
+                                    .iter()
+                                    .map(|(path, _)| path.as_str())
+                                    .collect();
+                                let removed: HashSet<String> = self
+                                    .boot_demo_pending_paths
+                                    .iter()
+                                    .filter(|path| !failed_paths.contains(path.as_str()))
+                                    .cloned()
+                                    .collect();
+                                if !removed.is_empty() {
+                                    self.boot_demo_files.retain(|g| !removed.contains(&g.path));
+                                    self.boot_demo_selected.retain(|path| !removed.contains(path));
+                                    if let Some(ref mut analysis) = self.analysis {
+                                        analysis
+                                            .boot_demo_files
+                                            .retain(|g| !removed.contains(&g.full_path));
+                                    }
+                                }
+                            }
+                        }
+                        Err(err) => {
+                            self.status_text = format!("Error eliminando mister-boot/mister-demo: {err}");
+                            self.status_is_error = true;
+                        }
+                    }
+                    self.boot_demo_pending_paths.clear();
+                }
                 WorkerMsg::RemoteDirsLoaded { path, result } => {
                     self.busy = BusyTask::None;
                     self.progress_fraction = None;
@@ -478,10 +564,32 @@ impl GuiApp {
                                 .filter(|i| i.status == MatchStatus::Unmatched)
                                 .count();
 
+                            let boot_count = analysis.boot_demo_files.len();
+                            if boot_count > 0 {
+                                let detected = duplicates::find_boot_demo_files(&analysis.boot_demo_files);
+                                self.boot_demo_selected.clear();
+                                for item in &detected {
+                                    self.boot_demo_selected.insert(item.path.clone());
+                                }
+                                self.boot_demo_files = detected;
+                                self.boot_demo_root = analysis.games_root.clone();
+                                self.boot_demo_is_sftp = analysis.is_sftp;
+                                self.boot_demo_prompt_from_scraper = true;
+                                self.boot_demo_confirm_open = true;
+                            } else if self.boot_demo_root == analysis.games_root {
+                                self.boot_demo_files.clear();
+                                self.boot_demo_selected.clear();
+                            }
+
                             self.selected_item_idx = if total > 0 { Some(0) } else { None };
                             self.analysis = Some(analysis);
+                            let boot_note = if boot_count > 0 {
+                                format!(" · {boot_count} archivo(s) mister-boot/mister-demo detectado(s)")
+                            } else {
+                                String::new()
+                            };
                             self.status_text = format!(
-                                "Análisis completado: {total} juegos, {covers} portadas indexadas ({ready} listas, {exists} ya existen, {unmatched} sin cover)."
+                                "Análisis completado: {total} juegos, {covers} portadas indexadas ({ready} listas, {exists} ya existen, {unmatched} sin cover){boot_note}."
                             );
                             self.status_is_error = false;
                         }
@@ -795,7 +903,10 @@ impl GuiApp {
         self.duplicate_groups.clear();
         self.duplicate_keep.clear();
         self.duplicate_pending_paths.clear();
-        self.status_text = "Buscando juegos duplicados...".to_string();
+        self.boot_demo_files.clear();
+        self.boot_demo_selected.clear();
+        self.boot_demo_pending_paths.clear();
+        self.status_text = "Buscando juegos duplicados y archivos mister-boot/mister-demo...".to_string();
         self.status_is_error = false;
         self.progress_fraction = None;
 
@@ -827,9 +938,14 @@ impl GuiApp {
             }
             .await;
 
-            let result: std::result::Result<(Vec<DuplicateGroup>, String, bool), String> =
+            let result: std::result::Result<(Vec<DuplicateGroup>, Vec<DuplicateGame>, String, bool), String> =
                 match scanned {
-                    Ok(games) => Ok((duplicates::find_duplicates(&games), root_for_message, is_sftp)),
+                    Ok(games) => Ok((
+                        duplicates::find_duplicates(&games),
+                        duplicates::find_boot_demo_files(&games),
+                        root_for_message,
+                        is_sftp,
+                    )),
                     Err(err) => Err(format!("{err:#}")),
                 };
             let _ = tx.send(WorkerMsg::DuplicatesFound { result });
@@ -906,6 +1022,73 @@ impl GuiApp {
             .map_err(|err| format!("{err:#}"));
 
             let _ = tx.send(WorkerMsg::DuplicatesDeleted(result));
+            ctx.request_repaint();
+        });
+    }
+
+    fn start_delete_boot_demos(&mut self, ctx: egui::Context) {
+        if self.is_busy() {
+            return;
+        }
+
+        let paths: Vec<String> = self
+            .boot_demo_files
+            .iter()
+            .filter(|item| self.boot_demo_selected.contains(&item.path))
+            .map(|item| item.path.clone())
+            .collect();
+        if paths.is_empty() {
+            self.status_text =
+                "Selecciona al menos un archivo mister-boot / mister-demo para eliminar.".to_string();
+            self.status_is_error = true;
+            return;
+        }
+
+        self.persist_config();
+        self.busy = BusyTask::DeletingBootDemos;
+        self.cancel_flag.store(false, Ordering::Relaxed);
+        self.boot_demo_pending_paths = paths.clone();
+        self.boot_demo_confirm_open = false;
+        self.status_text = "Eliminando archivos mister-boot / mister-demo...".to_string();
+        self.status_is_error = false;
+
+        let is_sftp = self.boot_demo_is_sftp;
+        let root = self.boot_demo_root.clone();
+        let dry_run = self.config.options.dry_run;
+        let sftp_cfg = self.config.sftp.clone();
+        let tx = self.tx.clone();
+
+        self.runtime.spawn(async move {
+            let result = async {
+                let storage = if is_sftp {
+                    StorageClient::connect_sftp(&sftp_cfg).await?
+                } else {
+                    StorageClient::Local
+                };
+                let tx_progress = tx.clone();
+                let ctx_progress = ctx.clone();
+                let outcome = duplicates::delete_paths(
+                    &storage,
+                    &root,
+                    is_sftp,
+                    &paths,
+                    dry_run,
+                    move |message| {
+                        let _ = tx_progress.send(WorkerMsg::Progress {
+                            current: None,
+                            message: message.to_string(),
+                        });
+                        ctx_progress.request_repaint();
+                    },
+                )
+                .await;
+                storage.close().await;
+                outcome
+            }
+            .await
+            .map_err(|err| format!("{err:#}"));
+
+            let _ = tx.send(WorkerMsg::BootDemosDeleted(result));
             ctx.request_repaint();
         });
     }
@@ -1611,8 +1794,8 @@ impl GuiApp {
 
             ui.horizontal(|ui| {
                 if ui
-                    .add_enabled(!busy, egui::Button::new("🔍 Buscar duplicados"))
-                    .on_hover_text("Agrupa juegos con el mismo nombre normalizado")
+                    .add_enabled(!busy, egui::Button::new("🔍 Buscar duplicados y boot/demo"))
+                    .on_hover_text("Agrupa juegos duplicados y detecta archivos mister-boot / mister-demo")
                     .clicked()
                 {
                     self.start_scan_duplicates(ctx.clone());
@@ -1623,7 +1806,7 @@ impl GuiApp {
                     .map(|group| group.games.len().saturating_sub(1))
                     .sum();
                 let label = if self.config.options.dry_run {
-                    format!("▶ Simular eliminación ({removable})")
+                    format!("▶ Simular duplicados ({removable})")
                 } else {
                     format!("🗑 Eliminar duplicados ({removable})")
                 };
@@ -1633,6 +1816,26 @@ impl GuiApp {
                 {
                     self.duplicate_confirm_open = true;
                 }
+
+                let selected_boot = self
+                    .boot_demo_files
+                    .iter()
+                    .filter(|item| self.boot_demo_selected.contains(&item.path))
+                    .count();
+                let boot_label = if self.config.options.dry_run {
+                    format!("▶ Simular boot/demo ({selected_boot})")
+                } else {
+                    format!("🧹 Eliminar boot/demo ({selected_boot})")
+                };
+                if ui
+                    .add_enabled(!busy && selected_boot > 0, egui::Button::new(boot_label))
+                    .clicked()
+                {
+                    self.boot_demo_prompt_from_scraper = false;
+                    self.boot_demo_confirm_open = true;
+                }
+
+                ui.checkbox(&mut self.config.options.dry_run, "Simulación (Dry-Run)");
             });
         });
     }
@@ -1659,7 +1862,7 @@ impl GuiApp {
                 ui.selectable_value(
                     &mut self.active_tab,
                     AppTab::Duplicates,
-                    "🧹 Duplicados",
+                    "🧹 Duplicados / Limpieza",
                 );
                 ui.separator();
                 ui.label("Almacenamiento:");
@@ -2204,18 +2407,24 @@ impl GuiApp {
             .min_size(280.0)
             .show(ui, |ui| {
                 ui.add_space(4.0);
-                ui.heading("Duplicados");
+                ui.heading("Duplicados y Limpieza");
                 ui.separator();
                 ui.label(
-                    "Los juegos se agrupan por nombre normalizado: se ignoran región, tag de disco, acentos, artículos y números romanos.",
+                    "Agrupa copias duplicadas por nombre normalizado y detecta archivos cosméticos mister-boot / mister-demo (uberyoji Boot ROMs).",
                 );
                 ui.add_space(6.0);
-                if self.duplicate_groups.is_empty() {
-                    ui.label("Pulsa \"Buscar duplicados\" para analizar la carpeta de juegos.");
+                if self.duplicate_groups.is_empty() && self.boot_demo_files.is_empty() {
+                    ui.label("Pulsa \"Buscar duplicados y boot/demo\" para analizar la carpeta de juegos.");
                     return;
                 }
 
-                ui.strong(format!("Grupos: {}", self.duplicate_groups.len()));
+                let selected_boot: Vec<String> = self
+                    .boot_demo_files
+                    .iter()
+                    .filter(|item| self.boot_demo_selected.contains(&item.path))
+                    .map(|item| item.path.clone())
+                    .collect();
+
                 let removable: Vec<String> = self
                     .duplicate_groups
                     .iter()
@@ -2235,19 +2444,47 @@ impl GuiApp {
                             .collect::<Vec<_>>()
                     })
                     .collect();
-                ui.label(format!("Copias a eliminar: {}", removable.len()));
+
+                ui.strong(format!(
+                    "Boot/Demo marcados: {} / {}",
+                    selected_boot.len(),
+                    self.boot_demo_files.len()
+                ));
+                ui.strong(format!(
+                    "Grupos duplicados: {} ({} copias a eliminar)",
+                    self.duplicate_groups.len(),
+                    removable.len()
+                ));
                 ui.separator();
-                if removable.is_empty() {
-                    ui.label("No hay copias marcadas para eliminar.");
+
+                if selected_boot.is_empty() && removable.is_empty() {
+                    ui.label("No hay archivos marcados para eliminar.");
                 } else {
                     egui::ScrollArea::vertical().show(ui, |ui| {
-                        for path in &removable {
-                            ui.small(path.as_str());
+                        if !selected_boot.is_empty() {
+                            ui.strong("Boot / Demo:");
+                            for path in &selected_boot {
+                                ui.small(path.as_str());
+                            }
+                            if !removable.is_empty() {
+                                ui.add_space(6.0);
+                            }
+                        }
+                        if !removable.is_empty() {
+                            ui.strong("Duplicados:");
+                            for path in &removable {
+                                ui.small(path.as_str());
+                            }
                         }
                     });
                 }
                 ui.add_space(6.0);
-                if self.duplicate_is_sftp {
+                let is_sftp = if !self.duplicate_groups.is_empty() {
+                    self.duplicate_is_sftp
+                } else {
+                    self.boot_demo_is_sftp
+                };
+                if is_sftp {
                     ui.colored_label(
                         egui::Color32::from_rgb(245, 190, 75),
                         "SFTP: los archivos se eliminarán permanentemente.",
@@ -2257,6 +2494,7 @@ impl GuiApp {
                         "Local: los archivos se moverán a .duplicates_trash/<fecha>/ dentro de la carpeta de juegos.",
                     );
                 }
+                ui.label("Las BIOS reales (boot.rom–boot3.rom) nunca se eliminan.");
                 ui.label("Al eliminar una hoja .cue/.ccd/.gdi también se eliminan sus pistas .bin/.img del mismo juego.");
             });
     }
@@ -2807,66 +3045,118 @@ impl GuiApp {
 
     fn render_duplicates_central_panel(&mut self, ui: &mut egui::Ui) {
         egui::CentralPanel::default().show(ui, |ui| {
-            if self.duplicate_groups.is_empty() {
+            if self.duplicate_groups.is_empty() && self.boot_demo_files.is_empty() {
                 ui.centered_and_justified(|ui| {
                     ui.vertical_centered(|ui| {
                         ui.add_space(60.0);
-                        ui.heading("Busca y elimina juegos duplicados");
+                        ui.heading("Busca duplicados y archivos mister-boot / mister-demo");
                         ui.add_space(8.0);
-                        ui.label("• Detecta ROMs con el mismo nombre aunque cambie la región, el tag de disco o el formato.");
-                        ui.label("• Elige qué copia conservar en cada grupo; el resto se moverá a la papelera (local) o se eliminará (SFTP).");
-                        ui.label("• Las pistas .bin/.img de una hoja .cue duplicada también se eliminan.");
+                        ui.label("• Detecta ROMs duplicados aunque cambie la región, el tag de disco o el formato.");
+                        ui.label("• Detecta archivos cosméticos mister-boot / mister-demo (uberyoji Boot ROMs) sin tocar BIOS reales (boot.rom).");
+                        ui.label("• Los archivos elegidos se mueven a la papelera (local) o se eliminan tras confirmar (SFTP).");
+                        ui.label("• Las pistas .bin/.img de una hoja .cue eliminada también se limpian.");
                         ui.add_space(12.0);
-                        ui.label("Pulsa \"🔍 Buscar duplicados\" arriba para empezar.");
+                        ui.label("Pulsa \"🔍 Buscar duplicados y boot/demo\" arriba para empezar.");
                     });
                 });
                 return;
             }
 
-            ui.horizontal(|ui| {
-                ui.heading("Juegos duplicados");
-                ui.separator();
-                ui.label(format!(
-                    "{} grupo(s) · raíz: {}",
-                    self.duplicate_groups.len(),
-                    self.duplicate_root
-                ));
-            });
-            ui.label("Selecciona con el círculo qué copia quieres conservar. Las demás se eliminarán.");
-            ui.add_space(4.0);
-
+            let busy = self.is_busy();
             let mut set_keep: Option<(usize, usize)> = None;
             egui::ScrollArea::vertical().show(ui, |ui| {
-                for (group_idx, group) in self.duplicate_groups.iter().enumerate() {
-                    let current = self
-                        .duplicate_keep
-                        .get(&group_idx)
-                        .copied()
-                        .unwrap_or(group.keep_idx);
-                    ui.collapsing(
-                        format!("{} · {} copias", group.key, group.games.len()),
-                        |ui| {
-                            for (game_idx, game) in group.games.iter().enumerate() {
-                                let recommended = game_idx == group.keep_idx;
-                                ui.horizontal_wrapped(|ui| {
-                                    if ui.radio(current == game_idx, "").clicked() {
-                                        set_keep = Some((group_idx, game_idx));
-                                    }
-                                    ui.label(game.file_name.as_str());
-                                    if recommended {
-                                        ui.colored_label(
-                                            egui::Color32::from_rgb(120, 210, 150),
-                                            "(recomendada)",
-                                        );
-                                    }
-                                    if let Some(ref system) = game.system {
-                                        ui.label(egui::RichText::new(system.as_str()).small());
-                                    }
-                                    ui.label(egui::RichText::new(game.path.as_str()).small());
-                                });
+                if !self.boot_demo_files.is_empty() {
+                    ui.horizontal(|ui| {
+                        ui.heading(format!(
+                            "Archivos MiSTer Boot / Demo ({})",
+                            self.boot_demo_files.len()
+                        ));
+                        ui.separator();
+                        if ui.add_enabled(!busy, egui::Button::new("Marcar todos")).clicked() {
+                            for item in &self.boot_demo_files {
+                                self.boot_demo_selected.insert(item.path.clone());
                             }
-                        },
+                        }
+                        if ui
+                            .add_enabled(!busy, egui::Button::new("Desmarcar todos"))
+                            .clicked()
+                        {
+                            self.boot_demo_selected.clear();
+                        }
+                    });
+                    ui.small(
+                        "Pertenecen a uberyoji Boot ROMs (intros cosméticas). No son BIOS reales como boot.rom y es seguro eliminarlos.",
                     );
+                    ui.add_space(4.0);
+                    for item in &self.boot_demo_files {
+                        let mut checked = self.boot_demo_selected.contains(&item.path);
+                        ui.horizontal_wrapped(|ui| {
+                            if ui
+                                .add_enabled(!busy, egui::Checkbox::without_text(&mut checked))
+                                .changed()
+                            {
+                                if checked {
+                                    self.boot_demo_selected.insert(item.path.clone());
+                                } else {
+                                    self.boot_demo_selected.remove(&item.path);
+                                }
+                            }
+                            ui.label(item.file_name.as_str());
+                            if let Some(ref system) = item.system {
+                                ui.label(egui::RichText::new(system.as_str()).small());
+                            }
+                            ui.label(egui::RichText::new(item.path.as_str()).small());
+                        });
+                    }
+                    ui.separator();
+                }
+
+                if self.duplicate_groups.is_empty() {
+                    ui.label("No se encontraron juegos duplicados.");
+                } else {
+                    ui.horizontal(|ui| {
+                        ui.heading("Juegos duplicados");
+                        ui.separator();
+                        ui.label(format!(
+                            "{} grupo(s) · raíz: {}",
+                            self.duplicate_groups.len(),
+                            self.duplicate_root
+                        ));
+                    });
+                    ui.label("Selecciona con el círculo qué copia quieres conservar. Las demás se eliminarán.");
+                    ui.add_space(4.0);
+
+                    for (group_idx, group) in self.duplicate_groups.iter().enumerate() {
+                        let current = self
+                            .duplicate_keep
+                            .get(&group_idx)
+                            .copied()
+                            .unwrap_or(group.keep_idx);
+                        ui.collapsing(
+                            format!("{} · {} copias", group.key, group.games.len()),
+                            |ui| {
+                                for (game_idx, game) in group.games.iter().enumerate() {
+                                    let recommended = game_idx == group.keep_idx;
+                                    ui.horizontal_wrapped(|ui| {
+                                        if ui.radio(current == game_idx, "").clicked() {
+                                            set_keep = Some((group_idx, game_idx));
+                                        }
+                                        ui.label(game.file_name.as_str());
+                                        if recommended {
+                                            ui.colored_label(
+                                                egui::Color32::from_rgb(120, 210, 150),
+                                                "(recomendada)",
+                                            );
+                                        }
+                                        if let Some(ref system) = game.system {
+                                            ui.label(egui::RichText::new(system.as_str()).small());
+                                        }
+                                        ui.label(egui::RichText::new(game.path.as_str()).small());
+                                    });
+                                }
+                            },
+                        );
+                    }
                 }
             });
 
@@ -2901,6 +3191,27 @@ impl GuiApp {
             ));
             if let Some(ref warn) = analysis.system_mismatch_warning {
                 ui.colored_label(egui::Color32::from_rgb(245, 190, 75), format!("⚠ {warn}"));
+            }
+            if !self.boot_demo_files.is_empty() && self.boot_demo_root == analysis.games_root {
+                let boot_count = self.boot_demo_files.len();
+                ui.horizontal_wrapped(|ui| {
+                    ui.colored_label(
+                        egui::Color32::from_rgb(245, 190, 75),
+                        format!(
+                            "ℹ Se detectaron {boot_count} archivo(s) mister-boot / mister-demo (no son BIOS reales)."
+                        ),
+                    );
+                    if ui
+                        .add_enabled(
+                            self.busy == BusyTask::None,
+                            egui::Button::new("🧹 Revisar / eliminar..."),
+                        )
+                        .clicked()
+                    {
+                        self.boot_demo_prompt_from_scraper = true;
+                        self.boot_demo_confirm_open = true;
+                    }
+                });
             }
             let exists_count = analysis
                 .items
@@ -3325,6 +3636,120 @@ impl GuiApp {
         }
     }
 
+    fn render_boot_demo_confirm_window(&mut self, ui: &mut egui::Ui) {
+        if !self.boot_demo_confirm_open || self.boot_demo_files.is_empty() {
+            return;
+        }
+        let mut open = self.boot_demo_confirm_open;
+        let mut accept = false;
+        let mut close_requested = false;
+        let mut select_all = false;
+        let mut clear_all = false;
+
+        let title = if self.boot_demo_prompt_from_scraper {
+            "Archivos mister-boot / mister-demo detectados"
+        } else {
+            "Confirmar eliminación de mister-boot / mister-demo"
+        };
+
+        egui::Window::new(title)
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(true)
+            .default_size([560.0, 380.0])
+            .show(ui, |ui| {
+                ui.label(format!(
+                    "Se encontraron {} archivo(s) cosméticos de uberyoji Boot ROMs en '{}'. ¿Deseas eliminarlos?",
+                    self.boot_demo_files.len(),
+                    self.boot_demo_root
+                ));
+                ui.colored_label(
+                    egui::Color32::from_rgb(120, 210, 150),
+                    "Seguro de borrar: las BIOS reales (boot.rom, boot0.rom–boot3.rom, scph*.bin) nunca se incluyen.",
+                );
+                ui.add_space(4.0);
+
+                ui.horizontal(|ui| {
+                    if ui.button("Marcar todos").clicked() {
+                        select_all = true;
+                    }
+                    if ui.button("Desmarcar todos").clicked() {
+                        clear_all = true;
+                    }
+                });
+                ui.separator();
+
+                egui::ScrollArea::vertical()
+                    .max_height(190.0)
+                    .show(ui, |ui| {
+                        for item in &self.boot_demo_files {
+                            let mut checked = self.boot_demo_selected.contains(&item.path);
+                            if ui
+                                .checkbox(&mut checked, item.path.as_str())
+                                .changed()
+                            {
+                                if checked {
+                                    self.boot_demo_selected.insert(item.path.clone());
+                                } else {
+                                    self.boot_demo_selected.remove(&item.path);
+                                }
+                            }
+                        }
+                    });
+                ui.separator();
+
+                if self.config.options.dry_run {
+                    ui.label("Modo simulación: no se borrará ningún archivo.");
+                } else if self.boot_demo_is_sftp {
+                    ui.colored_label(
+                        egui::Color32::from_rgb(245, 190, 75),
+                        "SFTP: los archivos seleccionados se eliminarán permanentemente.",
+                    );
+                } else {
+                    ui.label("Local: los archivos se moverán a .duplicates_trash/<fecha>/ (papelera recuperable).");
+                }
+                ui.small("Las pistas .bin/.img asociadas a una hoja .cue/.ccd/.gdi también se limpiarán.");
+                ui.small("Consejo: desactiva 'uberyoji Boot ROMS' en update_all (Extra Content) para que no vuelvan a descargarse.");
+                ui.add_space(6.0);
+
+                let selected_count = self
+                    .boot_demo_files
+                    .iter()
+                    .filter(|item| self.boot_demo_selected.contains(&item.path))
+                    .count();
+
+                ui.horizontal(|ui| {
+                    if ui.button("Mantener (no eliminar)").clicked() {
+                        close_requested = true;
+                    }
+                    let label = if self.config.options.dry_run {
+                        format!("Simular ({selected_count})")
+                    } else {
+                        format!("Eliminar seleccionados ({selected_count})")
+                    };
+                    let confirm =
+                        egui::Button::new(label).fill(egui::Color32::from_rgb(160, 48, 48));
+                    if ui.add_enabled(selected_count > 0, confirm).clicked() {
+                        accept = true;
+                    }
+                });
+            });
+
+        if select_all {
+            for item in &self.boot_demo_files {
+                self.boot_demo_selected.insert(item.path.clone());
+            }
+        } else if clear_all {
+            self.boot_demo_selected.clear();
+        }
+
+        self.boot_demo_confirm_open = open && !close_requested;
+        if accept {
+            let ctx = ui.ctx().clone();
+            self.start_delete_boot_demos(ctx);
+        }
+    }
+
     fn render_discovery_window(&mut self, ui: &mut egui::Ui) {
         if !self.discovery_open {
             return;
@@ -3524,6 +3949,7 @@ impl eframe::App for GuiApp {
         self.render_remote_browser_window(ui);
         self.render_discovery_window(ui);
         self.render_duplicates_confirm_window(ui);
+        self.render_boot_demo_confirm_window(ui);
     }
 
     fn save(&mut self, _storage: &mut dyn eframe::Storage) {
