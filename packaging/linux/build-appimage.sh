@@ -29,11 +29,11 @@ fetch_tool \
   "https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage" \
   "$TOOLS/linuxdeploy-x86_64.AppImage"
 fetch_tool \
-  "https://raw.githubusercontent.com/linuxdeploy/linuxdeploy-plugin-gtk/master/linuxdeploy-plugin-gtk.sh" \
-  "$TOOLS/linuxdeploy-plugin-gtk"
-fetch_tool \
   "https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage" \
   "$TOOLS/appimagetool-x86_64.AppImage"
+fetch_tool \
+  "https://github.com/AppImage/type2-runtime/releases/download/continuous/runtime-x86_64" \
+  "$TOOLS/runtime-x86_64"
 
 rm -rf "$APPDIR"
 mkdir -p "$APPDIR"
@@ -45,13 +45,23 @@ export ARCH=x86_64
 
 "$TOOLS/linuxdeploy-x86_64.AppImage" \
   --appdir "$APPDIR" \
-  --plugin gtk \
   --desktop-file "$ROOT/packaging/linux/mister-cover-scraper.desktop" \
   --icon-file "$ROOT/packaging/linux/mister-cover-scraper.svg" \
   --executable "$BIN"
 
+if command -v rsvg-convert >/dev/null 2>&1; then
+  rsvg-convert -w 256 -h 256 \
+    "$ROOT/packaging/linux/mister-cover-scraper.svg" \
+    -o "$APPDIR/usr/share/icons/hicolor/256x256/apps/mister-cover-scraper.png"
+  cp "$APPDIR/usr/share/icons/hicolor/256x256/apps/mister-cover-scraper.png" \
+    "$APPDIR/mister-cover-scraper.png"
+fi
+
 OUTPUT="$ROOT/mister-cover-scraper-linux-x86_64.AppImage"
 rm -f "$OUTPUT"
-"$TOOLS/appimagetool-x86_64.AppImage" "$APPDIR" "$OUTPUT"
+"$TOOLS/appimagetool-x86_64.AppImage" \
+  --runtime-file "$TOOLS/runtime-x86_64" \
+  "$APPDIR" \
+  "$OUTPUT"
 
 echo "AppImage generado: $OUTPUT"
