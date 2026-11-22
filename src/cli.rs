@@ -1,11 +1,15 @@
+use std::io::{self, Write};
 use std::path::PathBuf;
 use std::sync::Mutex;
 use std::sync::atomic::AtomicBool;
+use std::time::Duration;
 
-use anyhow::Result;
+use anyhow::{Result, bail};
 use clap::Args;
 
 use crate::config::{MediaPlacement, SftpAuthMode, SftpConfig, SyncOptions};
+use crate::discover::{self, DiscoverOptions};
+use crate::duplicates;
 use crate::models::MatchStatus;
 use crate::scanner;
 use crate::storage::StorageClient;
@@ -109,6 +113,97 @@ pub struct ListRemoteArgs {
     pub path: String,
 }
 
+/// Arguments for the `discover` CLI subcommand.
+#[derive(Debug, Args)]
+pub struct DiscoverArgs {
+    /// Subred a escanear en formato CIDR (ej. 192.168.1.0/24). Si se omite, se detecta la red local.
+    #[arg(long)]
+    pub subnet: Option<String>,
+
+    /// Puerto SSH a comprobar
+    #[arg(long, default_value_t = 22)]
+    pub port: u16,
+
+    /// Usuario SSH usado para verificar que el host es una MiSTer
+    #[arg(long, default_value = "root")]
+    pub user: String,
+
+    /// Contraseña SSH para la verificación (por defecto "1" en MiSTer)
+    #[arg(long, env = "MISTER_SSH_PASSWORD")]
+    pub password: Option<String>,
+
+    /// Ruta a clave privada SSH para la verificación
+    #[arg(long)]
+    pub key: Option<PathBuf>,
+
+    /// Frase de paso de la clave privada SSH
+    #[arg(long, env = "MISTER_SSH_PASSPHRASE")]
+    pub passphrase: Option<String>,
+
+    /// Tiempo máximo por host en milisegundos
+    #[arg(long, default_value_t = 400)]
+    pub timeout_ms: u64,
+
+    /// No verificar por SFTP; solo detectar hosts con el puerto SSH abierto
+    #[arg(long)]
+    pub no_verify: bool,
+
+    /// Número de hosts sondeados en paralelo
+    #[arg(long, default_value_t = 128)]
+    pub concurrency: usize,
+
+    /// Imprime los resultados en JSON
+    #[arg(long)]
+    pub json: bool,
+}
+
+/// Arguments for the `duplicates` CLI subcommand.
+#[derive(Debug, Args)]
+pub struct DuplicatesArgs {
+    /// Carpeta raíz de juegos a escanear (local o remota si se usa --sftp)
+    #[arg(long)]
+    pub games: String,
+
+    /// Host o IP de la MiSTer para escanear por SFTP/SSH
+    #[arg(long)]
+    pub sftp: Option<String>,
+
+    #[arg(long, default_value_t = 22)]
+    pub port: u16,
+
+    #[arg(long, default_value = "root")]
+    pub user: String,
+
+    #[arg(long, env = "MISTER_SSH_PASSWORD")]
+    pub password: Option<String>,
+
+    #[arg(long)]
+    pub key: Option<PathBuf>,
+
+    #[arg(long, env = "MISTER_SSH_PASSPHRASE")]
+    pub passphrase: Option<String>,
+
+    /// Muestra los resultados en JSON (cuando no se pide eliminación)
+    #[arg(long)]
+    pub json: bool,
+
+    /// Simula la eliminación sin borrar ni mover archivos
+    #[arg(long)]
+    pub dry_run: bool,
+
+    /// Conserva estas rutas y elimina el resto de sus grupos de duplicados
+    #[arg(long, num_args = 1..)]
+    pub keep: Vec<String>,
+
+    /// Elimina estas rutas concretas (deben pertenecer a un grupo de duplicados)
+    #[arg(long, num_args = 1..)]
+    pub delete: Vec<String>,
+
+    /// Confirma la eliminación sin preguntar
+    #[arg(long)]
+    pub yes: bool,
+}
+
 /// Arguments for the `upload` CLI subcommand.
 #[derive(Debug, Args)]
 pub struct UploadArgs {
@@ -160,7 +255,7 @@ pub struct UploadArgs {
     #[arg(long)]
     pub convert_to_chd: bool,
 
-    /// Ruta opcional a chdman.exe (por defecto se usa el conversor chd-rs integrado)
+    /// Ruta opcional a chdman (por defecto se usa el conversor chd-rs integrado)
     #[arg(long)]
     pub chdman: Option<PathBuf>,
 
@@ -262,6 +357,230 @@ pub async fn run_list_remote(args: ListRemoteArgs) -> Result<()> {
     for d in dirs {
         println!("  [DIR] {d}");
     }
+    storage.close().await;
+    Ok(())
+}
+
+/// Runs the `discover` CLI command to find MiSTer devices on the local network.
+pub async fn run_discover(args: DiscoverArgs) -> Result<()> {
+    let options = DiscoverOptions {
+        subnet: args.subnet.clone(),
+        port: args.port,
+        timeout: Duration::from_millis(args.timeout_ms.clamp(50, 10_000)),
+        verify: !args.no_verify,
+        sftp_user: args.user.clone(),
+        sftp_password: args.password.clone(),
+        sftp_key: args.key.clone(),
+        sftp_passphrase: args.passphrase.clone(),
+        concurrency: args.concurrency,
+    };
+
+    let scope = args
+        .subnet
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or("red local detectada");
+    println!("Buscando MiSTer en {scope} (puerto {})...", args.port);
+
+    let cancel = AtomicBool::new(false);
+    let results = discover::discover(&options, &cancel, |progress| {
+        if progress.scanned == progress.total || progress.scanned % 32 == 0 {
+            print!(
+                "\rEscaneados {}/{} hosts · {} candidato(s)...",
+                progress.scanned, progress.total, progress.found
+            );
+            let _ = std::io::stdout().flush();
+        }
+    })
+    .await?;
+    println!();
+
+    if args.json {
+        println!("{}", serde_json::to_string_pretty(&results)?);
+        return Ok(());
+    }
+
+    if results.is_empty() {
+        println!("No se encontró ninguna MiSTer. Prueba con --subnet 192.168.1.0/24 o revisa la red.");
+        return Ok(());
+    }
+
+    println!("MiSTer candidatas encontradas ({}):", results.len());
+    for host in &results {
+        let status = if host.verified {
+            "VERIFICADA"
+        } else if host.ssh_banner.is_some() {
+            "SSH"
+        } else {
+            "PUERTO ABIERTO"
+        };
+        println!(
+            "  [{status}] {}:{} ({} ms)",
+            host.ip, host.port, host.latency_ms
+        );
+        if let Some(banner) = &host.ssh_banner {
+            println!("      banner: {banner}");
+        }
+        if let Some(note) = &host.verification_note {
+            println!("      {note}");
+        }
+    }
+
+    if let Some(best) = results.iter().find(|h| h.verified).or_else(|| results.first()) {
+        println!("\nSugerencia:");
+        println!(
+            "  mister-cover-scraper list-remote --sftp {} --path /media/fat/games",
+            best.ip
+        );
+    }
+
+    Ok(())
+}
+
+/// Runs the `duplicates` CLI command: find same-name games and optionally delete chosen copies.
+pub async fn run_duplicates(args: DuplicatesArgs) -> Result<()> {
+    let is_sftp = args.sftp.is_some();
+    let storage = if let Some(host) = args.sftp.clone() {
+        println!("Conectando a {host}:{} por SFTP...", args.port);
+        connect_sftp_client(
+            host,
+            args.port,
+            args.user.clone(),
+            args.password.clone(),
+            args.key.clone(),
+            args.passphrase.clone(),
+            args.games.clone(),
+        )
+        .await?
+    } else {
+        StorageClient::Local
+    };
+
+    let cancel = AtomicBool::new(false);
+    let games = storage
+        .scan_games(&args.games, &cancel, |dir| println!("Escaneando: {dir}"))
+        .await;
+    let games = match games {
+        Ok(games) => games,
+        Err(err) => {
+            storage.close().await;
+            return Err(err);
+        }
+    };
+
+    let groups = duplicates::find_duplicates(&games);
+    println!("\nJuegos detectados: {} · grupos de duplicados: {}", games.len(), groups.len());
+
+    if args.json && args.delete.is_empty() && args.keep.is_empty() {
+        println!("{}", serde_json::to_string_pretty(&groups)?);
+        storage.close().await;
+        return Ok(());
+    }
+
+    if groups.is_empty() {
+        println!("No se encontraron juegos duplicados.");
+        storage.close().await;
+        return Ok(());
+    }
+
+    for (group_idx, group) in groups.iter().enumerate() {
+        println!("\n[{}] {}", group_idx + 1, group.key);
+        for (game_idx, game) in group.games.iter().enumerate() {
+            let tag = if game_idx == group.keep_idx {
+                "KEEP"
+            } else {
+                "DUP "
+            };
+            println!(
+                "   {tag} [{game_idx}] {} [{}]",
+                game.path, game.extension
+            );
+        }
+    }
+
+    let mut to_delete = Vec::new();
+    if !args.keep.is_empty() {
+        for keep_path in &args.keep {
+            let Some(group) = groups
+                .iter()
+                .find(|group| group.games.iter().any(|game| &game.path == keep_path))
+            else {
+                bail!("La ruta a conservar no pertenece a ningún grupo: {keep_path}");
+            };
+            let keep_idx = group
+                .games
+                .iter()
+                .position(|game| &game.path == keep_path)
+                .unwrap_or(group.keep_idx);
+            to_delete.extend(duplicates::paths_to_delete(group, keep_idx));
+        }
+    } else if !args.delete.is_empty() {
+        to_delete = duplicates::validate_delete_paths(&groups, &args.delete)?;
+    } else {
+        println!(
+            "\nUsa --keep <RUTA>... para conservar una copia y borrar el resto, o --delete <RUTA>... para borrar rutas concretas."
+        );
+        storage.close().await;
+        return Ok(());
+    }
+
+    let mut unique = Vec::new();
+    for path in to_delete {
+        if !unique.contains(&path) {
+            unique.push(path);
+        }
+    }
+
+    println!("\nSe procesarán {} archivo(s):", unique.len());
+    for path in &unique {
+        println!("  - {path}");
+    }
+    println!(
+        "{}",
+        if args.dry_run {
+            "DRY-RUN: no se eliminará nada."
+        } else if is_sftp {
+            "SFTP: los archivos se eliminarán permanentemente."
+        } else {
+            "Local: los archivos se moverán a una carpeta de papelera."
+        }
+    );
+
+    if !args.dry_run && !args.yes {
+        print!("¿Continuar? [s/N] ");
+        let _ = io::stdout().flush();
+        let mut answer = String::new();
+        let _ = io::stdin().read_line(&mut answer);
+        let answer = answer.trim();
+        if !answer.eq_ignore_ascii_case("s") && !answer.eq_ignore_ascii_case("si") {
+            println!("Operación cancelada.");
+            storage.close().await;
+            return Ok(());
+        }
+    }
+
+    let summary = duplicates::delete_paths(
+        &storage,
+        &args.games,
+        is_sftp,
+        &unique,
+        args.dry_run,
+        |message| println!("{message}"),
+    )
+    .await?;
+
+    println!(
+        "\nEliminados: {} · pistas de disco: {} · fallidos: {}",
+        summary.deleted, summary.tracks_deleted, summary.failed
+    );
+    if let Some(ref trash) = summary.trash_dir {
+        println!("Papelera: {trash}");
+    }
+    for (path, err) in &summary.errors {
+        println!("  [ERROR] {path}: {err}");
+    }
+
     storage.close().await;
     Ok(())
 }

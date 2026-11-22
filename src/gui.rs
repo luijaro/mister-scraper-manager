@@ -9,6 +9,8 @@ use rfd::FileDialog;
 use crate::archives;
 use crate::chd;
 use crate::config::{AppConfig, MediaPlacement, SftpAuthMode, StorageMode};
+use crate::discover::{self, DiscoverOptions, DiscoveredMister};
+use crate::duplicates::{self, DeleteSummary, DuplicateGroup};
 use crate::imaging;
 use crate::models::{AnalysisResult, CoverImage, MatchKind, MatchStatus, SyncSummary};
 use crate::scanner;
@@ -23,17 +25,21 @@ use crate::uploader::{
 enum AppTab {
     CoverScraper,
     BulkUploader,
+    Duplicates,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum BusyTask {
     None,
     TestingConnection,
+    Discovering,
     BrowsingRemote,
     Analyzing,
     Applying,
     StagingUpload,
     Uploading,
+    ScanningDuplicates,
+    DeletingDuplicates,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -59,6 +65,16 @@ enum WorkerMsg {
         message: String,
     },
     ConnectionTested(std::result::Result<String, String>),
+    DiscoveryProgress {
+        scanned: usize,
+        total: usize,
+        found: usize,
+    },
+    DiscoveryFinished(std::result::Result<Vec<DiscoveredMister>, String>),
+    DuplicatesFound {
+        result: std::result::Result<(Vec<DuplicateGroup>, String, bool), String>,
+    },
+    DuplicatesDeleted(std::result::Result<DeleteSummary, String>),
     RemoteDirsLoaded {
         path: String,
         result: std::result::Result<Vec<String>, String>,
@@ -156,6 +172,20 @@ struct GuiApp {
     browser_path: String,
     browser_dirs: Vec<String>,
     browser_error: Option<String>,
+
+    // MiSTer network discovery modal state
+    discovery_open: bool,
+    discovery_results: Vec<DiscoveredMister>,
+    discovery_error: Option<String>,
+    discovery_scanned: (usize, usize),
+
+    // Duplicate games state
+    duplicate_groups: Vec<DuplicateGroup>,
+    duplicate_root: String,
+    duplicate_is_sftp: bool,
+    duplicate_keep: HashMap<usize, usize>,
+    duplicate_pending_paths: Vec<String>,
+    duplicate_confirm_open: bool,
 }
 
 impl GuiApp {
@@ -209,6 +239,16 @@ impl GuiApp {
             browser_path,
             browser_dirs: Vec::new(),
             browser_error: None,
+            discovery_open: false,
+            discovery_results: Vec::new(),
+            discovery_error: None,
+            discovery_scanned: (0, 0),
+            duplicate_groups: Vec::new(),
+            duplicate_root: String::new(),
+            duplicate_is_sftp: false,
+            duplicate_keep: HashMap::new(),
+            duplicate_pending_paths: Vec::new(),
+            duplicate_confirm_open: false,
         }
     }
 
@@ -281,6 +321,125 @@ impl GuiApp {
                             self.status_is_error = true;
                         }
                     }
+                }
+                WorkerMsg::DiscoveryProgress {
+                    scanned,
+                    total,
+                    found,
+                } => {
+                    self.discovery_scanned = (scanned, total);
+                    self.status_text = format!(
+                        "Buscando MiSTer... {scanned}/{total} hosts escaneados, {found} candidato(s)."
+                    );
+                    self.status_is_error = false;
+                    self.progress_fraction = Some(if total == 0 {
+                        0.0
+                    } else {
+                        scanned as f32 / total as f32
+                    });
+                }
+                WorkerMsg::DiscoveryFinished(res) => {
+                    self.busy = BusyTask::None;
+                    self.progress_fraction = None;
+                    match res {
+                        Ok(results) => {
+                            self.discovery_results = results;
+                            self.discovery_error = None;
+                            self.discovery_open = true;
+                            if self.discovery_results.is_empty() {
+                                self.status_text =
+                                    "No se encontró ninguna MiSTer en la red local.".to_string();
+                                self.status_is_error = true;
+                            } else {
+                                self.status_text = format!(
+                                    "Se encontraron {} candidato(s) MiSTer. Selecciona uno.",
+                                    self.discovery_results.len()
+                                );
+                                self.status_is_error = false;
+                            }
+                        }
+                        Err(err) => {
+                            self.discovery_results.clear();
+                            self.discovery_error = Some(err.clone());
+                            self.discovery_open = true;
+                            self.status_text = format!("Error al buscar MiSTer: {err}");
+                            self.status_is_error = true;
+                        }
+                    }
+                }
+                WorkerMsg::DuplicatesFound { result } => {
+                    self.busy = BusyTask::None;
+                    self.progress_fraction = None;
+                    match result {
+                        Ok((groups, root, is_sftp)) => {
+                            self.duplicate_root = root;
+                            self.duplicate_is_sftp = is_sftp;
+                            self.duplicate_keep.clear();
+                            for (idx, group) in groups.iter().enumerate() {
+                                self.duplicate_keep.insert(idx, group.keep_idx);
+                            }
+                            let removable: usize = groups
+                                .iter()
+                                .map(|group| group.games.len().saturating_sub(1))
+                                .sum();
+                            self.duplicate_groups = groups;
+                            self.status_text = if self.duplicate_groups.is_empty() {
+                                "No se encontraron juegos duplicados.".to_string()
+                            } else {
+                                format!(
+                                    "{} grupo(s) de duplicados · {} copia(s) marcadas para eliminar.",
+                                    self.duplicate_groups.len(),
+                                    removable
+                                )
+                            };
+                            self.status_is_error = false;
+                        }
+                        Err(err) => {
+                            self.duplicate_groups.clear();
+                            self.status_text = format!("Error buscando duplicados: {err}");
+                            self.status_is_error = true;
+                        }
+                    }
+                }
+                WorkerMsg::DuplicatesDeleted(res) => {
+                    self.busy = BusyTask::None;
+                    self.progress_fraction = None;
+                    match res {
+                        Ok(summary) => {
+                            let dry = self.config.options.dry_run;
+                            let verb = if dry { "Se eliminarían" } else { "Eliminados" };
+                            let trash_note = summary
+                                .trash_dir
+                                .as_ref()
+                                .map(|dir| format!("Papelera: {dir}"))
+                                .unwrap_or_default();
+                            self.status_text = format!(
+                                "{verb} {} duplicado(s) y {} pista(s), {} fallidos. {trash_note}",
+                                summary.deleted, summary.tracks_deleted, summary.failed
+                            );
+                            self.status_is_error = summary.failed > 0;
+
+                            if !dry && summary.failed == 0 {
+                                let removed = self.duplicate_pending_paths.clone();
+                                for group in &mut self.duplicate_groups {
+                                    group.games.retain(|game| !removed.contains(&game.path));
+                                }
+                                self.duplicate_groups.retain(|group| group.games.len() > 1);
+                                self.duplicate_keep.clear();
+                                for (idx, group) in self.duplicate_groups.iter().enumerate() {
+                                    self.duplicate_keep.insert(
+                                        idx,
+                                        group.keep_idx.min(group.games.len().saturating_sub(1)),
+                                    );
+                                }
+                            }
+                        }
+                        Err(err) => {
+                            self.status_text = format!("Error eliminando duplicados: {err}");
+                            self.status_is_error = true;
+                        }
+                    }
+                    self.duplicate_pending_paths.clear();
                 }
                 WorkerMsg::RemoteDirsLoaded { path, result } => {
                     self.busy = BusyTask::None;
@@ -559,6 +718,198 @@ impl GuiApp {
         }
     }
 
+    fn start_discovery(&mut self, ctx: egui::Context) {
+        if self.is_busy() {
+            return;
+        }
+        self.persist_config();
+        self.busy = BusyTask::Discovering;
+        self.cancel_flag.store(false, Ordering::Relaxed);
+        self.discovery_results.clear();
+        self.discovery_error = None;
+        self.discovery_scanned = (0, 0);
+        self.discovery_open = false;
+        self.status_text = "Buscando MiSTer en la red local...".to_string();
+        self.status_is_error = false;
+        self.progress_fraction = None;
+
+        let options = DiscoverOptions {
+            subnet: None,
+            port: self.config.sftp.port,
+            timeout: std::time::Duration::from_millis(400),
+            verify: true,
+            sftp_user: self.config.sftp.username.clone(),
+            sftp_password: if self.config.sftp.password.trim().is_empty() {
+                None
+            } else {
+                Some(self.config.sftp.password.clone())
+            },
+            sftp_key: (self.config.sftp.auth_mode == SftpAuthMode::PrivateKey
+                && !self.config.sftp.private_key_path.trim().is_empty())
+            .then(|| PathBuf::from(self.config.sftp.private_key_path.trim())),
+            sftp_passphrase: (!self.config.sftp.passphrase.trim().is_empty())
+                .then(|| self.config.sftp.passphrase.clone()),
+            concurrency: 128,
+        };
+        let tx = self.tx.clone();
+        let cancel = Arc::clone(&self.cancel_flag);
+
+        self.runtime.spawn(async move {
+            let tx_progress = tx.clone();
+            let ctx_progress = ctx.clone();
+            let result = discover::discover(&options, &cancel, move |progress| {
+                let _ = tx_progress.send(WorkerMsg::DiscoveryProgress {
+                    scanned: progress.scanned,
+                    total: progress.total,
+                    found: progress.found,
+                });
+                ctx_progress.request_repaint();
+            })
+            .await
+            .map_err(|e| format!("{e:#}"));
+
+            let _ = tx.send(WorkerMsg::DiscoveryFinished(result));
+            ctx.request_repaint();
+        });
+    }
+
+    fn start_scan_duplicates(&mut self, ctx: egui::Context) {
+        if self.is_busy() {
+            return;
+        }
+        self.persist_config();
+
+        let is_sftp = self.config.storage_mode == StorageMode::Sftp;
+        let root = match self.config.storage_mode {
+            StorageMode::Local => self.config.local_games_dir.trim().to_string(),
+            StorageMode::Sftp => self.config.sftp.remote_path.trim().to_string(),
+        };
+        if root.is_empty() {
+            self.status_text = "Indica la carpeta de juegos antes de buscar duplicados.".to_string();
+            self.status_is_error = true;
+            return;
+        }
+
+        self.busy = BusyTask::ScanningDuplicates;
+        self.cancel_flag.store(false, Ordering::Relaxed);
+        self.duplicate_groups.clear();
+        self.duplicate_keep.clear();
+        self.duplicate_pending_paths.clear();
+        self.status_text = "Buscando juegos duplicados...".to_string();
+        self.status_is_error = false;
+        self.progress_fraction = None;
+
+        let sftp_cfg = self.config.sftp.clone();
+        let tx = self.tx.clone();
+        let cancel = Arc::clone(&self.cancel_flag);
+        let root_for_message = root.clone();
+
+        self.runtime.spawn(async move {
+            let scanned = async {
+                let storage = if is_sftp {
+                    StorageClient::connect_sftp(&sftp_cfg).await?
+                } else {
+                    StorageClient::Local
+                };
+                let tx_progress = tx.clone();
+                let ctx_progress = ctx.clone();
+                let result = storage
+                    .scan_games(&root, &cancel, move |dir| {
+                        let _ = tx_progress.send(WorkerMsg::Progress {
+                            current: None,
+                            message: format!("Escaneando: {dir}"),
+                        });
+                        ctx_progress.request_repaint();
+                    })
+                    .await;
+                storage.close().await;
+                result
+            }
+            .await;
+
+            let result: std::result::Result<(Vec<DuplicateGroup>, String, bool), String> =
+                match scanned {
+                    Ok(games) => Ok((duplicates::find_duplicates(&games), root_for_message, is_sftp)),
+                    Err(err) => Err(format!("{err:#}")),
+                };
+            let _ = tx.send(WorkerMsg::DuplicatesFound { result });
+            ctx.request_repaint();
+        });
+    }
+
+    fn start_delete_duplicates(&mut self, ctx: egui::Context) {
+        if self.is_busy() {
+            return;
+        }
+
+        let mut paths = Vec::new();
+        for (group_idx, group) in self.duplicate_groups.iter().enumerate() {
+            let keep = self
+                .duplicate_keep
+                .get(&group_idx)
+                .copied()
+                .unwrap_or(group.keep_idx);
+            for (game_idx, game) in group.games.iter().enumerate() {
+                if game_idx != keep {
+                    paths.push(game.path.clone());
+                }
+            }
+        }
+        if paths.is_empty() {
+            self.status_text = "Selecciona qué copia conservar en cada grupo primero.".to_string();
+            self.status_is_error = true;
+            return;
+        }
+
+        self.persist_config();
+        self.busy = BusyTask::DeletingDuplicates;
+        self.cancel_flag.store(false, Ordering::Relaxed);
+        self.duplicate_pending_paths = paths.clone();
+        self.duplicate_confirm_open = false;
+        self.status_text = "Eliminando duplicados...".to_string();
+        self.status_is_error = false;
+
+        let is_sftp = self.duplicate_is_sftp;
+        let root = self.duplicate_root.clone();
+        let dry_run = self.config.options.dry_run;
+        let sftp_cfg = self.config.sftp.clone();
+        let tx = self.tx.clone();
+
+        self.runtime.spawn(async move {
+            let result = async {
+                let storage = if is_sftp {
+                    StorageClient::connect_sftp(&sftp_cfg).await?
+                } else {
+                    StorageClient::Local
+                };
+                let tx_progress = tx.clone();
+                let ctx_progress = ctx.clone();
+                let outcome = duplicates::delete_paths(
+                    &storage,
+                    &root,
+                    is_sftp,
+                    &paths,
+                    dry_run,
+                    move |message| {
+                        let _ = tx_progress.send(WorkerMsg::Progress {
+                            current: None,
+                            message: message.to_string(),
+                        });
+                        ctx_progress.request_repaint();
+                    },
+                )
+                .await;
+                storage.close().await;
+                outcome
+            }
+            .await
+            .map_err(|err| format!("{err:#}"));
+
+            let _ = tx.send(WorkerMsg::DuplicatesDeleted(result));
+            ctx.request_repaint();
+        });
+    }
+
     fn start_test_connection(&mut self, ctx: egui::Context) {
         if self.is_busy() {
             return;
@@ -574,7 +925,7 @@ impl GuiApp {
 
         let sftp_cfg = self.config.sftp.clone();
         let target_raw = match self.active_tab {
-            AppTab::CoverScraper => self.config.sftp.remote_path.clone(),
+            AppTab::CoverScraper | AppTab::Duplicates => self.config.sftp.remote_path.clone(),
             AppTab::BulkUploader => self.config.upload_sftp_games_base.clone(),
         };
         let tx = self.tx.clone();
@@ -1214,6 +1565,75 @@ impl GuiApp {
                     );
                 }
             }
+
+            ui.separator();
+            if ui
+                .add_enabled(!self.is_busy(), egui::Button::new("🔎 Buscar MiSTer"))
+                .on_hover_text("Escanea la red local buscando hosts con SSH/SFTP de MiSTer")
+                .clicked()
+            {
+                let ctx = ui.ctx().clone();
+                self.start_discovery(ctx);
+            }
+        });
+    }
+
+    fn render_duplicates_top_controls(&mut self, ui: &mut egui::Ui, busy: bool, ctx: &egui::Context) {
+        ui.add_enabled_ui(!busy, |ui| {
+            match self.config.storage_mode {
+                StorageMode::Local => {
+                    ui.horizontal(|ui| {
+                        ui.label("Carpeta de juegos a analizar:");
+                        ui.add_sized(
+                            [(ui.available_width() - 150.0).max(120.0), 22.0],
+                            egui::TextEdit::singleline(&mut self.config.local_games_dir)
+                                .hint_text(r"D:\MiSTer\games  o  /media/fat/games"),
+                        );
+                        if ui.button("Elegir carpeta...").clicked()
+                            && let Some(path) = FileDialog::new().pick_folder()
+                        {
+                            self.config.local_games_dir = path.to_string_lossy().to_string();
+                        }
+                    });
+                }
+                StorageMode::Sftp => {
+                    self.render_sftp_credentials_row(ui);
+                    ui.horizontal(|ui| {
+                        ui.label("Ruta de juegos en MiSTer:");
+                        ui.add_sized(
+                            [(ui.available_width() - 280.0).max(120.0), 22.0],
+                            egui::TextEdit::singleline(&mut self.config.sftp.remote_path)
+                                .hint_text("/media/fat/games"),
+                        );
+                    });
+                }
+            }
+
+            ui.horizontal(|ui| {
+                if ui
+                    .add_enabled(!busy, egui::Button::new("🔍 Buscar duplicados"))
+                    .on_hover_text("Agrupa juegos con el mismo nombre normalizado")
+                    .clicked()
+                {
+                    self.start_scan_duplicates(ctx.clone());
+                }
+                let removable: usize = self
+                    .duplicate_groups
+                    .iter()
+                    .map(|group| group.games.len().saturating_sub(1))
+                    .sum();
+                let label = if self.config.options.dry_run {
+                    format!("▶ Simular eliminación ({removable})")
+                } else {
+                    format!("🗑 Eliminar duplicados ({removable})")
+                };
+                if ui
+                    .add_enabled(!busy && removable > 0, egui::Button::new(label))
+                    .clicked()
+                {
+                    self.duplicate_confirm_open = true;
+                }
+            });
         });
     }
 
@@ -1235,6 +1655,11 @@ impl GuiApp {
                     &mut self.active_tab,
                     AppTab::BulkUploader,
                     "📦 Cargar Juegos (Bulk)",
+                );
+                ui.selectable_value(
+                    &mut self.active_tab,
+                    AppTab::Duplicates,
+                    "🧹 Duplicados",
                 );
                 ui.separator();
                 ui.label("Almacenamiento:");
@@ -1269,6 +1694,7 @@ impl GuiApp {
             match self.active_tab {
                 AppTab::CoverScraper => self.render_scraper_top_controls(ui, busy, &ctx),
                 AppTab::BulkUploader => self.render_uploader_top_controls(ui, busy, &ctx),
+                AppTab::Duplicates => self.render_duplicates_top_controls(ui, busy, &ctx),
             }
             ui.add_space(4.0);
         });
@@ -1279,7 +1705,7 @@ impl GuiApp {
             match self.config.storage_mode {
                 StorageMode::Local => {
                     ui.horizontal(|ui| {
-                        ui.label("Carpeta de juegos (ej. PSX o \\\\mister\\fat\\games\\PSX):");
+                        ui.label("Carpeta de juegos (ej. PSX, /media/fat/games/PSX o \\\\mister\\fat\\games\\PSX):");
                         ui.add_sized(
                             [(ui.available_width() - 150.0).max(120.0), 22.0],
                             egui::TextEdit::singleline(&mut self.config.local_games_dir)
@@ -1663,7 +2089,7 @@ impl GuiApp {
                 });
 
                 ui.horizontal(|ui| {
-                    ui.label("chdman.exe opcional:");
+                    ui.label("chdman opcional:");
                     if ui
                         .add_sized(
                             [(ui.available_width() - 260.0).max(120.0), 22.0],
@@ -1767,7 +2193,72 @@ impl GuiApp {
         match self.active_tab {
             AppTab::CoverScraper => self.render_scraper_inspector(ui),
             AppTab::BulkUploader => self.render_uploader_inspector(ui),
+            AppTab::Duplicates => self.render_duplicates_inspector(ui),
         }
+    }
+
+    fn render_duplicates_inspector(&mut self, ui: &mut egui::Ui) {
+        egui::Panel::right("duplicates_inspector_panel")
+            .resizable(true)
+            .default_size(360.0)
+            .min_size(280.0)
+            .show(ui, |ui| {
+                ui.add_space(4.0);
+                ui.heading("Duplicados");
+                ui.separator();
+                ui.label(
+                    "Los juegos se agrupan por nombre normalizado: se ignoran región, tag de disco, acentos, artículos y números romanos.",
+                );
+                ui.add_space(6.0);
+                if self.duplicate_groups.is_empty() {
+                    ui.label("Pulsa \"Buscar duplicados\" para analizar la carpeta de juegos.");
+                    return;
+                }
+
+                ui.strong(format!("Grupos: {}", self.duplicate_groups.len()));
+                let removable: Vec<String> = self
+                    .duplicate_groups
+                    .iter()
+                    .enumerate()
+                    .flat_map(|(group_idx, group)| {
+                        let keep = self
+                            .duplicate_keep
+                            .get(&group_idx)
+                            .copied()
+                            .unwrap_or(group.keep_idx);
+                        group
+                            .games
+                            .iter()
+                            .enumerate()
+                            .filter(|(game_idx, _)| *game_idx != keep)
+                            .map(|(_, game)| game.path.clone())
+                            .collect::<Vec<_>>()
+                    })
+                    .collect();
+                ui.label(format!("Copias a eliminar: {}", removable.len()));
+                ui.separator();
+                if removable.is_empty() {
+                    ui.label("No hay copias marcadas para eliminar.");
+                } else {
+                    egui::ScrollArea::vertical().show(ui, |ui| {
+                        for path in &removable {
+                            ui.small(path.as_str());
+                        }
+                    });
+                }
+                ui.add_space(6.0);
+                if self.duplicate_is_sftp {
+                    ui.colored_label(
+                        egui::Color32::from_rgb(245, 190, 75),
+                        "SFTP: los archivos se eliminarán permanentemente.",
+                    );
+                } else {
+                    ui.label(
+                        "Local: los archivos se moverán a .duplicates_trash/<fecha>/ dentro de la carpeta de juegos.",
+                    );
+                }
+                ui.label("Al eliminar una hoja .cue/.ccd/.gdi también se eliminan sus pistas .bin/.img del mismo juego.");
+            });
     }
 
     fn render_scraper_inspector(&mut self, ui: &mut egui::Ui) {
@@ -2310,7 +2801,79 @@ impl GuiApp {
         match self.active_tab {
             AppTab::CoverScraper => self.render_scraper_central_panel(ui),
             AppTab::BulkUploader => self.render_uploader_central_panel(ui, hovering_files),
+            AppTab::Duplicates => self.render_duplicates_central_panel(ui),
         }
+    }
+
+    fn render_duplicates_central_panel(&mut self, ui: &mut egui::Ui) {
+        egui::CentralPanel::default().show(ui, |ui| {
+            if self.duplicate_groups.is_empty() {
+                ui.centered_and_justified(|ui| {
+                    ui.vertical_centered(|ui| {
+                        ui.add_space(60.0);
+                        ui.heading("Busca y elimina juegos duplicados");
+                        ui.add_space(8.0);
+                        ui.label("• Detecta ROMs con el mismo nombre aunque cambie la región, el tag de disco o el formato.");
+                        ui.label("• Elige qué copia conservar en cada grupo; el resto se moverá a la papelera (local) o se eliminará (SFTP).");
+                        ui.label("• Las pistas .bin/.img de una hoja .cue duplicada también se eliminan.");
+                        ui.add_space(12.0);
+                        ui.label("Pulsa \"🔍 Buscar duplicados\" arriba para empezar.");
+                    });
+                });
+                return;
+            }
+
+            ui.horizontal(|ui| {
+                ui.heading("Juegos duplicados");
+                ui.separator();
+                ui.label(format!(
+                    "{} grupo(s) · raíz: {}",
+                    self.duplicate_groups.len(),
+                    self.duplicate_root
+                ));
+            });
+            ui.label("Selecciona con el círculo qué copia quieres conservar. Las demás se eliminarán.");
+            ui.add_space(4.0);
+
+            let mut set_keep: Option<(usize, usize)> = None;
+            egui::ScrollArea::vertical().show(ui, |ui| {
+                for (group_idx, group) in self.duplicate_groups.iter().enumerate() {
+                    let current = self
+                        .duplicate_keep
+                        .get(&group_idx)
+                        .copied()
+                        .unwrap_or(group.keep_idx);
+                    ui.collapsing(
+                        format!("{} · {} copias", group.key, group.games.len()),
+                        |ui| {
+                            for (game_idx, game) in group.games.iter().enumerate() {
+                                let recommended = game_idx == group.keep_idx;
+                                ui.horizontal_wrapped(|ui| {
+                                    if ui.radio(current == game_idx, "").clicked() {
+                                        set_keep = Some((group_idx, game_idx));
+                                    }
+                                    ui.label(game.file_name.as_str());
+                                    if recommended {
+                                        ui.colored_label(
+                                            egui::Color32::from_rgb(120, 210, 150),
+                                            "(recomendada)",
+                                        );
+                                    }
+                                    if let Some(ref system) = game.system {
+                                        ui.label(egui::RichText::new(system.as_str()).small());
+                                    }
+                                    ui.label(egui::RichText::new(game.path.as_str()).small());
+                                });
+                            }
+                        },
+                    );
+                }
+            });
+
+            if let Some((group_idx, game_idx)) = set_keep {
+                self.duplicate_keep.insert(group_idx, game_idx);
+            }
+        });
     }
 
     fn render_scraper_central_panel(&mut self, ui: &mut egui::Ui) {
@@ -2681,6 +3244,157 @@ impl GuiApp {
         });
     }
 
+    fn render_duplicates_confirm_window(&mut self, ui: &mut egui::Ui) {
+        if !self.duplicate_confirm_open {
+            return;
+        }
+        let mut open = self.duplicate_confirm_open;
+        let mut accept = false;
+        let mut close_requested = false;
+
+        egui::Window::new("Confirmar eliminación de duplicados")
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(false)
+            .default_size([520.0, 320.0])
+            .show(ui, |ui| {
+                let removable: Vec<String> = self
+                    .duplicate_groups
+                    .iter()
+                    .enumerate()
+                    .flat_map(|(group_idx, group)| {
+                        let keep = self
+                            .duplicate_keep
+                            .get(&group_idx)
+                            .copied()
+                            .unwrap_or(group.keep_idx);
+                        group
+                            .games
+                            .iter()
+                            .enumerate()
+                            .filter(|(game_idx, _)| *game_idx != keep)
+                            .map(|(_, game)| game.path.clone())
+                            .collect::<Vec<_>>()
+                    })
+                    .collect();
+
+                ui.label(format!("Se procesarán {} copia(s):", removable.len()));
+                ui.separator();
+                egui::ScrollArea::vertical()
+                    .max_height(200.0)
+                    .show(ui, |ui| {
+                        for path in &removable {
+                            ui.small(path.as_str());
+                        }
+                    });
+                ui.separator();
+
+                if self.config.options.dry_run {
+                    ui.label("Modo simulación: no se borrará ningún archivo.");
+                } else if self.duplicate_is_sftp {
+                    ui.colored_label(
+                        egui::Color32::from_rgb(245, 190, 75),
+                        "SFTP: los archivos se eliminarán permanentemente.",
+                    );
+                } else {
+                    ui.label("Los archivos se moverán a una papelera recuperable.");
+                }
+                ui.label("Las pistas de disco del mismo juego también se eliminarán.");
+
+                ui.horizontal(|ui| {
+                    if ui.button("Cancelar").clicked() {
+                        close_requested = true;
+                    }
+                    let label = if self.config.options.dry_run {
+                        "Simular"
+                    } else {
+                        "Eliminar"
+                    };
+                    let confirm =
+                        egui::Button::new(label).fill(egui::Color32::from_rgb(160, 48, 48));
+                    if ui.add(confirm).clicked() {
+                        accept = true;
+                    }
+                });
+            });
+
+        self.duplicate_confirm_open = open && !close_requested;
+        if accept {
+            let ctx = ui.ctx().clone();
+            self.start_delete_duplicates(ctx);
+        }
+    }
+
+    fn render_discovery_window(&mut self, ui: &mut egui::Ui) {
+        if !self.discovery_open {
+            return;
+        }
+        let mut open = self.discovery_open;
+        let mut selected: Option<String> = None;
+
+        egui::Window::new("Buscar MiSTer en la red local")
+            .open(&mut open)
+            .default_size([580.0, 400.0])
+            .resizable(true)
+            .show(ui, |ui| {
+                if self.busy == BusyTask::Discovering {
+                    let (scanned, total) = self.discovery_scanned;
+                    ui.label(format!("Escaneando la red... {scanned}/{total} hosts"));
+                    if total > 0 {
+                        ui.add(
+                            egui::ProgressBar::new(scanned as f32 / total as f32)
+                                .show_percentage(),
+                        );
+                    }
+                    return;
+                }
+
+                if let Some(ref err) = self.discovery_error {
+                    ui.colored_label(egui::Color32::from_rgb(245, 110, 110), err);
+                }
+
+                if self.discovery_results.is_empty() {
+                    ui.label("No se encontraron candidatos MiSTer en la red local.");
+                } else {
+                    ui.label("Selecciona la MiSTer que quieras usar:");
+                    egui::ScrollArea::vertical()
+                        .max_height(300.0)
+                        .show(ui, |ui| {
+                            for host in &self.discovery_results {
+                                let badge = if host.verified { "✅" } else { "📡" };
+                                ui.horizontal_wrapped(|ui| {
+                                    ui.label(format!(
+                                        "{badge} {}:{} · {} ms",
+                                        host.ip, host.port, host.latency_ms
+                                    ));
+                                    if ui.button("Usar esta IP").clicked() {
+                                        selected = Some(host.ip.clone());
+                                    }
+                                });
+                                if let Some(ref banner) = host.ssh_banner {
+                                    ui.label(egui::RichText::new(format!("SSH: {banner}")).small());
+                                }
+                                if let Some(ref note) = host.verification_note {
+                                    ui.label(egui::RichText::new(note.as_str()).small());
+                                }
+                                ui.separator();
+                            }
+                        });
+                }
+            });
+
+        self.discovery_open = open;
+
+        if let Some(ip) = selected {
+            self.config.sftp.host = ip.clone();
+            self.persist_config();
+            self.discovery_open = false;
+            self.status_text =
+                format!("MiSTer seleccionada: {ip}. Pulsa \"Probar conexión\" para validar.");
+            self.status_is_error = false;
+        }
+    }
+
     fn render_remote_browser_window(&mut self, ui: &mut egui::Ui) {
         if !self.browser_open {
             return;
@@ -2762,7 +3476,7 @@ impl GuiApp {
         if select_and_close {
             let norm = posix_normalize(&self.browser_path);
             match self.active_tab {
-                AppTab::CoverScraper => self.config.sftp.remote_path = norm,
+                AppTab::CoverScraper | AppTab::Duplicates => self.config.sftp.remote_path = norm,
                 AppTab::BulkUploader => {
                     self.config.upload_sftp_games_base = norm;
                     self.upload_existing_dirs.clear();
@@ -2808,6 +3522,8 @@ impl eframe::App for GuiApp {
         self.render_right_inspector(ui);
         self.render_central_panel(ui, hovering_files);
         self.render_remote_browser_window(ui);
+        self.render_discovery_window(ui);
+        self.render_duplicates_confirm_window(ui);
     }
 
     fn save(&mut self, _storage: &mut dyn eframe::Storage) {

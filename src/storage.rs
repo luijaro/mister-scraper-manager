@@ -405,6 +405,71 @@ impl StorageClient {
         }
     }
 
+    /// Removes a single file from the target storage (no trash/undo semantics).
+    pub async fn remove_file(&self, path: &str) -> Result<()> {
+        match self {
+            Self::Local => tokio::fs::remove_file(path)
+                .await
+                .with_context(|| format!("No se pudo eliminar el archivo: {path}")),
+            Self::Sftp(client) => {
+                let norm = posix_normalize(path);
+                let mut conn = client.conn.lock().await;
+                client.ensure_alive(&mut conn).await?;
+                match conn
+                    .sftp
+                    .remove_file(&norm)
+                    .await
+                    .with_context(|| format!("No se pudo eliminar el archivo remoto: {norm}"))
+                {
+                    Ok(()) => Ok(()),
+                    Err(err) if is_session_closed_error(&err) => {
+                        client.reconnect(&mut conn).await?;
+                        conn.sftp
+                            .remove_file(&norm)
+                            .await
+                            .with_context(|| format!("No se pudo eliminar el archivo remoto: {norm}"))
+                    }
+                    Err(err) => Err(err),
+                }
+            }
+        }
+    }
+
+    /// Lists file (non-directory) names inside `dir`.
+    pub async fn list_files(&self, dir: &str) -> Result<Vec<String>> {
+        match self {
+            Self::Local => {
+                let p = PathBuf::from(dir);
+                tokio::task::spawn_blocking(move || -> Result<Vec<String>> {
+                    let mut files = Vec::new();
+                    for entry in fs::read_dir(&p)
+                        .with_context(|| format!("No se pudo leer la carpeta: {}", p.display()))?
+                    {
+                        let entry = entry?;
+                        if entry.file_type()?.is_file() {
+                            files.push(entry.file_name().to_string_lossy().to_string());
+                        }
+                    }
+                    Ok(files)
+                })
+                .await?
+            }
+            Self::Sftp(client) => {
+                let norm = posix_normalize(dir);
+                let mut conn = client.conn.lock().await;
+                client.ensure_alive(&mut conn).await?;
+                match sftp_list_files(&conn.sftp, &norm).await {
+                    Ok(files) => Ok(files),
+                    Err(err) if is_session_closed_error(&err) => {
+                        client.reconnect(&mut conn).await?;
+                        sftp_list_files(&conn.sftp, &norm).await
+                    }
+                    Err(err) => Err(err),
+                }
+            }
+        }
+    }
+
     /// Streams a local file to `dst` in 256 KiB chunks, reporting `(bytes_sent, total_bytes)`
     /// without buffering entire large disc images into memory.
     pub async fn copy_local_file_streamed<F>(
@@ -538,6 +603,24 @@ async fn sftp_list_subdirs(sftp: &SftpSession, norm: &str) -> Result<Vec<String>
     }
     dirs.sort_by_key(|a| a.to_lowercase());
     Ok(dirs)
+}
+
+async fn sftp_list_files(sftp: &SftpSession, norm: &str) -> Result<Vec<String>> {
+    let entries = sftp
+        .read_dir(norm)
+        .await
+        .with_context(|| format!("No se pudo leer carpeta remota: {norm}"))?;
+    let mut files = Vec::new();
+    for entry in entries {
+        let name = entry.file_name();
+        if name == "." || name == ".." || name.starts_with('.') {
+            continue;
+        }
+        if !entry.file_type().is_dir() {
+            files.push(name);
+        }
+    }
+    Ok(files)
 }
 
 async fn sftp_list_existing_media(

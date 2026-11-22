@@ -401,7 +401,7 @@ where
                     );
                 }
                 bail!(
-                    "Error al convertir {} a CHD: {native_err}. (Si es una imagen atípica, puedes indicar la ruta a chdman.exe en Opciones).",
+                    "Error al convertir {} a CHD: {native_err}. (Si es una imagen atípica, puedes indicar la ruta a chdman en Opciones).",
                     input_sheet.display()
                 );
             }
@@ -420,7 +420,7 @@ where
     }
 
     bail!(
-        "El formato .{ext} no está soportado por el conversor integrado sin chdman.exe. Usa .cue/.gdi o configura chdman.exe."
+        "El formato .{ext} no está soportado por el conversor integrado sin chdman. Usa .cue/.gdi o configura chdman."
     );
 }
 

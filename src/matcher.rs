@@ -582,6 +582,18 @@ fn token_dice(a: &HashSet<String>, b: &HashSet<String>) -> f64 {
     (2.0 * shared as f64) / ((a.len() + b.len()) as f64)
 }
 
+/// Returns a canonical key for a game/cover name, after removing region tags,
+/// disc markers, accents, articles, connector words and roman numeral differences.
+/// Used both for cover matching and for detecting duplicate ROM names.
+pub fn canonical_game_key(stem: &str) -> String {
+    let parsed = parse_name(stem);
+    if !parsed.clean_title.is_empty() {
+        parsed.clean_title
+    } else {
+        parsed.full_norm
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
@@ -713,5 +725,21 @@ mod tests {
         let hits = index.match_game("Mario Kart - Super Circuit (USA)", Some(SystemId::Gba), true);
         assert_eq!(hits.len(), 1);
         assert!((hits[0].score - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn canonical_key_ignores_region_disc_and_roman_variants() {
+        assert_eq!(
+            canonical_game_key("Final Fantasy VII (USA)"),
+            canonical_game_key("Final Fantasy 7 (Europe) (Disc 1)")
+        );
+    }
+
+    #[test]
+    fn canonical_key_keeps_sequel_numbers_distinct() {
+        assert_ne!(
+            canonical_game_key("Mario Bros 2 (USA)"),
+            canonical_game_key("Mario Bros 3 (USA)")
+        );
     }
 }

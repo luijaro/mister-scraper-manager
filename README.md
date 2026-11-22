@@ -18,23 +18,75 @@ Aplicación de escritorio y consola (CLI) en **Rust** para enlazar automáticame
 - **Conexión local y remota por internet**:
   - **Local / Tarjeta SD / SMB de Windows**: por ejemplo `D:\games\PSX` o `\\mister\fat\games\PSX`.
   - **SFTP / SSH (puerto 22)**: accede directamente al almacenamiento de tu MiSTer FPGA tanto en red local (`mister.local` o IP LAN) como a través de internet (Tailscale, WireGuard o SSH expuesto), con autenticación por contraseña (por defecto `root` / `1` en MiSTer) o clave privada SSH y explorador visual de carpetas remotas.
+  - **Descubrimiento automático de la MiSTer**: botón **🔎 Buscar MiSTer** en la GUI y subcomando `discover` en CLI que escanean la red local, detectan hosts con SSH/SFTP y verifican el acceso a `/media/fat`.
+  - **Detección y eliminación de duplicados**: pestaña **🧹 Duplicados** en la GUI y subcomando `duplicates` en CLI. Agrupa juegos por nombre normalizado (región, tag de disco, acentos, artículos y números romanos se ignoran), recomienda qué copia conservar y elimina el resto. En local mueve los archivos a una papelera recuperable; por SFTP los elimina tras confirmación. Al borrar una hoja `.cue`/`.ccd`/`.gdi` también elimina sus pistas `.bin`/`.img` huérfanas.
+  - **AppImage para Linux**: además del binario y del `.exe` de Windows, las releases publican un AppImage portable.
 - **Interfaz gráfica (GUI) y modo consola (CLI)**:
   - Vista previa de portadas, filtro de dudosos/faltantes, ajuste en vivo del umbral de similitud, top 5 de sugerencias y buscador para asignación manual.
 - **Carga masiva de juegos (`Cargar Juegos (Bulk)` / subcomando `upload`)**:
   - Sube archivos individuales, **comprimidos (`.zip`, `.7z`, `.rar`)** o carpetas completas en lote (incluidas carpetas con `.cue` + múltiples pistas `.bin`, `.gdi` o `.m3u` multidisco) arrastrando y soltando o desde el selector.
   - **Lectura interna de `.zip` / `.7z` / `.rar`**: inspecciona las cabeceras sin descomprimir primero para clasificar ROMs sueltos y bundles de disco (conservando los `.zip` de Arcade/MAME intactos y soportando volúmenes `.partXX.rar`), extrae al vuelo con motores nativos (y respaldo automático con `7-Zip` / `UnRAR` / `bsdtar`).
-  - **Conversión opcional BIN/CUE (y GDI) → CHD**: transforma discos `.cue`/`.bin` y `.gdi` a un solo `.chd` v5 usando `chd-rs` integrado (sin requerir `chdman`, aunque acepta `chdman.exe` como respaldo opcional), limpiando UTF-8 BOM/rutas del `.cue` y reescribiendo playlists `.m3u` multidisco.
+  - **Conversión opcional BIN/CUE (y GDI) → CHD**: transforma discos `.cue`/`.bin` y `.gdi` a un solo `.chd` v5 usando `chd-rs` integrado (sin requerir `chdman`, aunque acepta `chdman` como respaldo opcional), limpiando UTF-8 BOM/rutas del `.cue` y reescribiendo playlists `.m3u` multidisco.
   - Detecta la consola de cada juego, enruta automáticamente a su carpeta correspondiente (`PSX/`, `GBA/`, `SNES/`, `MegaDrive/`, etc.) y crea/asigna su carátula `.png` en `media/` mientras transmite por streaming sin saturar la memoria RAM.
 
 ## Compilación
 
-Requisitos: Rust toolchain (`rustc` / `cargo`, edition 2024) con soporte MSVC de Visual Studio en Windows (compila todo en local, incluyendo `chd-rs` y `unrar-ng`). No requiere `chdman`, `7z`, OpenSSL, CMake ni NASM externos para compilar o usar las funciones básicas.
+Requisitos: Rust toolchain (`rustc` / `cargo`, edition 2024). El proyecto compila `chd-rs` y `unrar-ng` localmente; no requiere `chdman`, `7z`, OpenSSL, CMake ni NASM externos para las funciones básicas.
+
+### Windows
+
+Requiere soporte MSVC de Visual Studio.
 
 ```powershell
 cargo build --release
 ```
 
 El binario compilado queda en `target\release\mister-cover-scraper.exe`.
+
+### Linux (CachyOS / Arch)
+
+Instala las dependencias de sistema necesarias para compilar la GUI (eframe/egui/winit/rfd) y las herramientas nativas:
+
+```bash
+sudo pacman -S --needed base-devel rust clang pkgconf gtk3 libxcb libxkbcommon libxkbcommon-x11 wayland \
+  xdg-desktop-portal fontconfig freetype2
+```
+
+> En CachyOS también funciona con `rustup` si prefieres gestionar el toolchain manualmente. `xdg-desktop-portal` (y un backend como `xdg-desktop-portal-kde` o `xdg-desktop-portal-gtk`) es necesario para los diálogos de selección de archivos en entornos sandbox/portal.
+
+Compila:
+
+```bash
+cargo build --release
+```
+
+El binario compilado queda en `target/release/mister-cover-scraper`.
+
+### AppImage (Linux)
+
+Las releases incluyen `mister-cover-scraper-linux-x86_64.AppImage` (además del binario y del `.exe` de Windows). El workflow de GitHub Actions se dispara al empujar un tag `v*`. Para generarlo localmente:
+
+```bash
+sudo pacman -S --needed patchelf desktop-file-utils curl librsvg gobject-introspection \
+  glib2 gdk-pixbuf2 squashfs-tools
+cargo build --release --locked
+bash packaging/linux/build-appimage.sh
+```
+
+El AppImage se genera como `mister-cover-scraper-linux-x86_64.AppImage` en la raíz del proyecto.
+
+Para ejecutarlo:
+
+```bash
+chmod +x mister-cover-scraper-linux-x86_64.AppImage
+./mister-cover-scraper-linux-x86_64.AppImage
+```
+
+Si tu sistema no tiene FUSE 2 (`sudo pacman -S --needed fuse2`), puedes ejecutarlo sin montarlo:
+
+```bash
+./mister-cover-scraper-linux-x86_64.AppImage --appimage-extract-and-run
+```
 
 ## Uso rápido
 
@@ -47,33 +99,87 @@ cargo run --release
 ```
 
 1. Elige **Carpeta Local / SMB** o **MiSTer Remoto (SFTP / SSH)**.
-2. Selecciona la carpeta de juegos (ej. `PSX` o `/media/fat/games/PSX` en la MiSTer) y la carpeta de imágenes (ej. `sony playstation`).
-3. Pulsa **Analizar y Emparejar** para revisar los enlaces sugeridos, previsualizar portadas y corregir manualmente cualquier juego dudoso.
-4. Pulsa **Aplicar Covers Seleccionados** para crear `media/` y copiar o subir las portadas faltantes.
+2. Si usas SFTP, pulsa **🔎 Buscar MiSTer** para escanear la red local y seleccionar la IP detectada.
+3. Selecciona la carpeta de juegos (ej. `PSX` o `/media/fat/games/PSX` en la MiSTer) y la carpeta de imágenes (ej. `sony playstation`).
+4. Pulsa **Analizar y Emparejar** para revisar los enlaces sugeridos, previsualizar portadas y corregir manualmente cualquier juego dudoso.
+5. Pulsa **Aplicar Covers Seleccionados** para crear `media/` y copiar o subir las portadas faltantes.
 
 ### 2. Línea de comandos (CLI)
 
-#### Carpeta local o recurso compartido SMB
+#### Buscar la IP de la MiSTer (`discover`)
 
-```powershell
+```bash
+# Escanear la red local detectada automáticamente
+cargo run --release -- discover
+
+# Escanear una subred concreta y mostrar JSON
+cargo run --release -- discover --subnet 192.168.1.0/24 --json
+
+# Solo detectar hosts con SSH abierto, sin verificar por SFTP
+cargo run --release -- discover --no-verify
+```
+
+El escáner comprueba el puerto SSH (22 por defecto), lee el banner y, si la verificación está activada, intenta autenticarse por SFTP y comprobar que `/media/fat` sea accesible (por defecto usuario `root` y contraseña `1`). Opciones útiles: `--subnet`, `--port`, `--user`, `--password`, `--key`, `--timeout-ms`, `--concurrency`, `--json`.
+
+> Úsalo solo en tu propia red local. Si no quieres probar credenciales SSH, añade `--no-verify`.
+
+#### Detectar y eliminar juegos duplicados (`duplicates`)
+
+En la **GUI**, abre la pestaña **🧹 Duplicados**, elige la carpeta de juegos (o la ruta SFTP), pulsa **Buscar duplicados**, selecciona con el círculo qué copia conservar en cada grupo y pulsa **Eliminar duplicados** (se pedirá confirmación).
+
+En **CLI**:
+
+```bash
+# 1) Listar grupos (marca KEEP la copia recomendada)
+cargo run --release -- duplicates --games "/run/media/$USER/MiSTer/games"
+
+# 2) Simular: conservar una copia y borrar el resto del grupo
+cargo run --release -- duplicates --games "/run/media/$USER/MiSTer/games" \
+  --keep "/run/media/$USER/MiSTer/games/PSX/Final Fantasy VII (USA).chd" --dry-run
+
+# 3) Aplicar en SFTP (borrado permanente)
+cargo run --release -- duplicates --sftp 192.168.1.50 --games /media/fat/games \
+  --keep "/media/fat/games/PSX/Final Fantasy VII (USA).chd" --yes
+
+# 4) Borrar rutas concretas y ver resultados en JSON
+cargo run --release -- duplicates --games "$HOME/MiSTer/games" --json
+```
+
+Opciones: `--games` (raíz), `--sftp`/`--port`/`--user`/`--password`/`--key`, `--keep <RUTA>...`, `--delete <RUTA>...`, `--dry-run`, `--yes`, `--json`.
+
+> En local los duplicados se mueven a `<raíz>/.duplicates_trash/<timestamp>/` para poder recuperarlos. En SFTP no hay papelera: la eliminación es permanente y por eso se pide confirmación (o `--yes`).
+
+#### Carpeta local, recurso compartido SMB o montaje Linux
+
+```bash
 # Simulación previa (--dry-run) sin escribir archivos
-cargo run --release -- sync --games "D:\MiSTer\games\PSX" --images "D:\Covers\sony playstation" --dry-run
+cargo run --release -- sync --games "/run/media/$USER/MiSTer/games/PSX" --images "$HOME/Covers/sony playstation" --dry-run
 
 # Ejecutar copia y conversión a PNG
+cargo run --release -- sync --games "/run/media/$USER/MiSTer/games/PSX" --images "$HOME/Covers/sony playstation"
+```
+
+<details>
+<summary>Ejemplos en PowerShell (Windows)</summary>
+
+```powershell
+cargo run --release -- sync --games "D:\MiSTer\games\PSX" --images "D:\Covers\sony playstation" --dry-run
 cargo run --release -- sync --games "D:\MiSTer\games\PSX" --images "D:\Covers\sony playstation"
 ```
 
+</details>
+
 #### Remoto vía SFTP / SSH (LAN, Tailscale o Internet)
 
-```powershell
+```bash
 # Listar carpetas disponibles en la MiSTer
 cargo run --release -- list-remote --sftp 192.168.1.50 --path /media/fat/games
 
 # Sincronizar covers de PSX directamente hacia la MiSTer
-cargo run --release -- sync --sftp 192.168.1.50 --games /media/fat/games/PSX --images "D:\Covers\sony playstation"
+cargo run --release -- sync --sftp 192.168.1.50 --games /media/fat/games/PSX --images "$HOME/Covers/sony playstation"
 
-# Usando clave privada SSH y contraseña por variable de entorno si aplica
-cargo run --release -- sync --sftp mi-mister.tailnet.ts.net --key "C:\Users\TuUsuario\.ssh\id_ed25519" --games /media/fat/games/PSX --images "D:\Covers\sony playstation"
+# Usando clave privada SSH
+cargo run --release -- sync --sftp mi-mister.tailnet.ts.net --key "$HOME/.ssh/id_ed25519" --games /media/fat/games/PSX --images "$HOME/Covers/sony playstation"
 ```
 
 Opciones útiles de `sync`:
@@ -88,20 +194,20 @@ Opciones útiles de `sync`:
 
 Permite subir en lote archivos sueltos, comprimidos (`.zip`, `.7z`, `.rar`) y carpetas completas con `.cue`/`.bin`, `.gdi` o `.m3u`, enrutando cada juego a su carpeta de consola bajo `--games-root`, convirtiendo discos a `.chd` si se indica `--convert-to-chd` y creando su portada `.png` en `media/`:
 
-```powershell
+```bash
 # Subir en lote por SFTP convirtiendo .7z/.cue/.bin a CHD al vuelo
-cargo run --release -- upload `
-  --sftp 192.168.1.50 `
-  --games-root /media/fat/games `
-  --images "D:\Covers" `
-  --convert-to-chd `
-  --sources "D:\Descargas\Golden Sun (USA).zip" "D:\Descargas\Castlevania - Symphony of the Night (USA).7z" `
+cargo run --release -- upload \
+  --sftp 192.168.1.50 \
+  --games-root /media/fat/games \
+  --images "$HOME/Covers" \
+  --convert-to-chd \
+  --sources "$HOME/Descargas/Golden Sun (USA).zip" "$HOME/Descargas/Castlevania - Symphony of the Night (USA).7z" \
   --dry-run
 ```
 
 Opciones clave de `upload`:
 - `--convert-to-chd`: convierte discos `.cue`/`.bin` y `.gdi` (sueltos, en carpeta o dentro de `.zip`/`.7z`/`.rar`) a `.chd` usando `chd-rs` integrado antes de subir.
-- `--chdman <RUTA>`: ruta opcional a `chdman.exe` como respaldo alternativo.
+- `--chdman <RUTA>`: ruta opcional a `chdman` como respaldo alternativo.
 - `--temp-dir <CARPETA>`: carpeta temporal personalizada para extraer archivos grandes o generar `.chd` (útil si `C:` tiene poco espacio).
 - `--system <CONSOLA>`: consola por defecto para juegos de extensión ambigua (`.chd`, `.cue`, `.iso`, `.bin`).
 - `--overwrite-games` / `--overwrite-covers`: sobrescribe juegos o portadas ya existentes en la MiSTer.

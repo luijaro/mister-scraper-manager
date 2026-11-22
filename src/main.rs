@@ -2,6 +2,8 @@ mod archives;
 mod chd;
 mod cli;
 mod config;
+mod discover;
+mod duplicates;
 mod gui;
 mod imaging;
 mod matcher;
@@ -36,6 +38,10 @@ enum Commands {
     Upload(cli::UploadArgs),
     /// Lista subcarpetas remotas en la MiSTer FPGA vía SFTP
     ListRemote(cli::ListRemoteArgs),
+    /// Busca la IP de una MiSTer FPGA en la red local (SSH/SFTP)
+    Discover(cli::DiscoverArgs),
+    /// Detecta juegos con el mismo nombre y elimina los duplicados elegidos
+    Duplicates(cli::DuplicatesArgs),
 }
 
 fn main() -> Result<()> {
@@ -59,6 +65,18 @@ fn main() -> Result<()> {
                 .enable_all()
                 .build()?;
             rt.block_on(cli::run_list_remote(args))
+        }
+        Some(Commands::Discover(args)) => {
+            let rt = tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()?;
+            rt.block_on(cli::run_discover(args))
+        }
+        Some(Commands::Duplicates(args)) => {
+            let rt = tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()?;
+            rt.block_on(cli::run_duplicates(args))
         }
     }
 }

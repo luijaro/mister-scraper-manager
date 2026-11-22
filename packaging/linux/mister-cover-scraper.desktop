@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=MiSTer Cover Scraper
+Comment=Enlaza carátulas con juegos de MiSTer FPGA ConsoleMode
+Exec=mister-cover-scraper
+Icon=mister-cover-scraper
+Terminal=false
+Categories=Utility;Game;
+Keywords=MiSTer;FPGA;covers;scraper;ConsoleMode;
+StartupWMClass=mister-cover-scraper

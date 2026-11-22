@@ -1,8 +1,10 @@
 # Rust build artifacts
 /target/
+/dist/
 **/*.rs.bk
 *.pdb
 *.exe
+*.AppImage
 
 # Environment / secrets
 .env
